@@ -1,0 +1,18 @@
+[package]
+name = "target-esp32s3"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared = { path = "../shared" }
+ed25519-dalek = { version = "2.1", default-features = false }
+postcard = "1.0"
+
+esp-backtrace = { version = "0.15.0", features = ["esp32s3", "panic-handler", "println"] }
+esp-hal = { version = "1.0.0", features = ["esp32s3", "unstable"] }
+esp-hal-smartled = { version = "0.17.0", features = ["esp32s3"] }
+smart-leds = "0.4.0"
+esp-println = { version = "0.13.0", features = ["esp32s3", "log"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3"] }
+log = "0.4"
+fugit = "0.4.0"

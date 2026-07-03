@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "master-cli",
+    "shared",
+    "target-esp32s3",
+]
+resolver = "2"
