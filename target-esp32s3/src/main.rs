@@ -6,12 +6,11 @@ use esp_hal::{
     delay::Delay,
     rmt::Rmt,
     time::Rate,
+    Blocking,
 };
-use esp_hal_smartled::{smart_led_buffer, SmartLedsAdapter};
+use esp_hal_smartled::Ws2812SmartLeds;
 use smart_leds::{SmartLedsWrite, colors, RGB8};
 use log::info;
-
-esp_bootloader_esp_idf::esp_app_desc!();
 
 #[esp_hal::main]
 fn main() -> ! {
@@ -21,10 +20,9 @@ fn main() -> ! {
 
     // Initialize the RMT peripheral
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    let mut rmt_buffer = smart_led_buffer!(8);
     
     // Connect the 8-LED stick to GPIO 4 (Channel 0)
-    let mut led_stick = SmartLedsAdapter::new(rmt.channel0, peripherals.GPIO4, &mut rmt_buffer);
+    let mut led_stick = Ws2812SmartLeds::<8, Blocking>::new(rmt.channel0, peripherals.GPIO4).unwrap();
 
     info!("---------------------------------------");
     info!("ESP32-S3 Hardware Smoke Test Passed!");
