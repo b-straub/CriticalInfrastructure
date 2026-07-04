@@ -136,10 +136,8 @@ async fn main(spawner: Spawner) {
     loop {
         if let Some(config) = stack.config_v4() {
             info!("Got IP: {}", config.address);
-            
             lcd.clean_display();
-            lcd.write_str_to_cur("IP:");
-            lcd.set_cursor_pos((1, 0));
+            lcd.set_cursor_pos((0, 0));
             
             let mut ip_str = heapless::String::<32>::new();
             use core::fmt::Write;
