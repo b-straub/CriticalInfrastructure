@@ -329,16 +329,14 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                         let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
                                         use ed25519_dalek::Verifier;
                                         
-                                        let supervisor_signing_key = ed25519_dalek::SigningKey::from_bytes(&supervisor_key);
-                                        let supervisor_verifying_key = supervisor_signing_key.verifying_key();
-                                        
                                         let mut role_pubkey = [0u8; 32];
                                         let mut role_authorized = false;
                                         
-                                        if role == "Supervisor" {
-                                            role_pubkey = supervisor_verifying_key.to_bytes();
-                                            role_authorized = true;
-                                        } else {
+                                        if let Ok(supervisor_verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&supervisor_key) {
+                                            if role == "Supervisor" || role == "supervisor@critical.infra" {
+                                                role_pubkey = supervisor_verifying_key.to_bytes();
+                                                role_authorized = true;
+                                            } else {
                                                 for entry in unsafe { &*core::ptr::addr_of!(ROLES) }.iter() {
                                                     if entry.name == role {
                                                         let mut cert_msg = heapless::String::<128>::new();
@@ -362,6 +360,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                         }
                                                     }
                                                 }
+                                        }
                                         }
                                         
                                         if role_authorized {
