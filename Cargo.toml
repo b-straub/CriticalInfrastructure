@@ -1,5 +1,5 @@
 [workspace]
-members = [
+members = ["gui-client",
     "master-cli",
     "shared",
     "target-esp32s3",
