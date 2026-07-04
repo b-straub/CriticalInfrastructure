@@ -72,6 +72,12 @@ async fn net_task(mut runner: embassy_net::Runner<'static, WifiDevice<'static>>)
 async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
     info!("Starting...");
+    if let Some(raw_hex_str) = option_env!("SUPERVISOR_PUBKEY") {
+        let hex_str = raw_hex_str.trim();
+        info!("SSOT Supervisor PubKey ({} chars): {}", hex_str.len(), hex_str);
+    } else {
+        info!("WARNING: No SUPERVISOR_PUBKEY found at compile time! Crypto will default to zeros.");
+    }
 
     let peripherals = esp_hal::init(esp_hal::Config::default());
     
@@ -201,7 +207,8 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                     info!("Received payload: {}", payload);
                     
                     let mut supervisor_key = [0u8; 32];
-                    if let Some(hex_str) = option_env!("SUPERVISOR_PUBKEY") {
+                    if let Some(raw_hex_str) = option_env!("SUPERVISOR_PUBKEY") {
+                        let hex_str = raw_hex_str.trim();
                         if hex_str.len() == 64 {
                             for i in 0..32 {
                                 if let Ok(b) = u8::from_str_radix(&hex_str[i*2..i*2+2], 16) {
