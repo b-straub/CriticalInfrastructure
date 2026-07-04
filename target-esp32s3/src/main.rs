@@ -145,8 +145,76 @@ async fn main(spawner: Spawner) {
                     break;
                 }
                 Ok(n) => {
-                    let cmd = core::str::from_utf8(&buf[..n]).unwrap_or("");
-                    info!("Received: {}", cmd);
+                    let payload = core::str::from_utf8(&buf[..n]).unwrap_or("");
+                    info!("Received payload: {}", payload);
+                    
+                    let mut parts = payload.split(';');
+                    let role = parts.next().unwrap_or("");
+                    let cmd = parts.next().unwrap_or("");
+                    let sig_hex = parts.next().unwrap_or("");
+                    
+                    let public_key_bytes: [u8; 32] = match role {
+                        "Guest" => [67, 203, 9, 190, 46, 179, 37, 3, 159, 86, 143, 84, 8, 233, 46, 35, 0, 196, 143, 163, 130, 35, 151, 247, 205, 102, 118, 20, 4, 2, 42, 119],
+                        "User" => [52, 14, 148, 7, 73, 165, 219, 158, 105, 0, 18, 117, 141, 255, 203, 251, 32, 209, 223, 160, 199, 122, 189, 224, 42, 158, 55, 70, 17, 111, 42, 74],
+                        "Admin" => [241, 223, 202, 228, 133, 156, 65, 105, 254, 90, 151, 73, 242, 196, 162, 32, 74, 177, 21, 74, 254, 27, 96, 199, 133, 27, 117, 51, 98, 215, 82, 184],
+                        _ => {
+                            info!("Invalid role");
+                            continue;
+                        }
+                    };
+                    
+                    if sig_hex.len() != 128 {
+                        info!("Invalid signature length");
+                        continue;
+                    }
+                    
+                    let mut sig_bytes = [0u8; 64];
+                    let mut valid_hex = true;
+                    for i in 0..64 {
+                        let hex_byte = &sig_hex[i*2..i*2+2];
+                        if let Ok(b) = u8::from_str_radix(hex_byte, 16) {
+                            sig_bytes[i] = b;
+                        } else {
+                            valid_hex = false;
+                        }
+                    }
+                    
+                    if !valid_hex {
+                        info!("Invalid hex in signature");
+                        continue;
+                    }
+                    
+                    let pk = ed25519_dalek::VerifyingKey::from_bytes(&public_key_bytes).unwrap();
+                    let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+                    
+                    use ed25519_dalek::Verifier;
+                    if pk.verify(cmd.as_bytes(), &sig).is_err() {
+                        info!("Signature verification failed!");
+                        continue;
+                    }
+                    
+                    info!("Signature OK. Checking RBAC for role '{}'", role);
+                    
+                    let mut allowed = false;
+                    if cmd.starts_with("COLOR green") {
+                        // All roles allowed
+                        allowed = true;
+                    } else if cmd.starts_with("COLOR yellow") {
+                        if role == "User" || role == "Admin" {
+                            allowed = true;
+                        }
+                    } else if cmd.starts_with("COLOR red") {
+                        if role == "Admin" {
+                            allowed = true;
+                        }
+                    }
+                    
+                    if !allowed {
+                        info!("Permission denied for role '{}' to execute '{}'", role, cmd);
+                        continue;
+                    }
+                    
+                    info!("Executing command: {}", cmd);
                     if cmd.starts_with("COLOR red") {
                         data = [colors::RED; 8];
                     } else if cmd.starts_with("COLOR yellow") {

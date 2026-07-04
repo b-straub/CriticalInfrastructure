@@ -8,4 +8,4 @@ runner = "cargo espflash flash --monitor"
 build-std = ["alloc", "core"]
 
 [env]
-ESP_LOG = "INFO"
+ESP_LOG = "info,esp_wifi=error"
