@@ -92,6 +92,22 @@ async fn main(spawner: Spawner) {
     let mut data = [colors::BLACK; 8];
     ws2812.write(data.iter().cloned()).unwrap();
 
+    use esp_hal::i2c::master::{I2c, Config as I2cConfig};
+    use lcd1602_driver::lcd::{Lcd, Basic, Ext};
+    use lcd1602_driver::sender::I2cSender;
+    
+    let mut i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
+        .expect("I2C new failed")
+        .with_sda(peripherals.GPIO8)
+        .with_scl(peripherals.GPIO9);
+    
+    let mut sender = I2cSender::new(&mut i2c, 0x27);
+    let mut delay = esp_hal::delay::Delay::new();
+    let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
+    
+    lcd.clean_display();
+    lcd.write_str_to_cur("Init Network...");
+
     let net_config = NetConfig::dhcpv4(Default::default());
     
     static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
@@ -120,6 +136,19 @@ async fn main(spawner: Spawner) {
     loop {
         if let Some(config) = stack.config_v4() {
             info!("Got IP: {}", config.address);
+            
+            lcd.clean_display();
+            lcd.write_str_to_cur("IP:");
+            lcd.set_cursor_pos((1, 0));
+            
+            let mut ip_str = heapless::String::<32>::new();
+            use core::fmt::Write;
+            write!(&mut ip_str, "{}", config.address).unwrap();
+            
+            // split CIDR mask (e.g. 192.168.1.100/24 -> 192.168.1.100)
+            let ip_only = ip_str.split('/').next().unwrap_or(&ip_str);
+            lcd.write_str_to_cur(ip_only);
+            
             break;
         }
         Timer::after(Duration::from_millis(500)).await;

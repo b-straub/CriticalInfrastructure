@@ -23,3 +23,5 @@ embassy-time = "0.5.1"
 embassy-net = { version = "0.9.1", features = ["tcp", "dhcpv4", "medium-ethernet", "log"] }
 esp-hal-embassy = { version = "0.9.1", features = ["esp32s3", "log-04"] }
 static_cell = { version = "2.1.1", features = ["nightly"] }
+lcd1602-driver = "0.3.0"
+heapless = "0.8"
