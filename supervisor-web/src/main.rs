@@ -384,10 +384,10 @@ impl Component for App {
                                     let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
                                     Msg::UpdateIp(input.value())
                                 })}
-                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 200px; font-size: 16px;"
+                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; max-width: 300px; box-sizing: border-box; font-size: 16px;"
                             />
                         </div>
-                        <div style="display: flex; flex-direction: column;">
+                        <div style="display: flex; flex-direction: column; width: 100%; max-width: 650px;">
                             <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "ESP32 ROM Pubkey:" }</label>
                             <input type="text"
                                 value={self.esp32_pubkey.clone()}
@@ -395,7 +395,7 @@ impl Component for App {
                                     let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
                                     Msg::UpdateEspPubkey(input.value())
                                 })}
-                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 600px; font-size: 16px; font-family: monospace;"
+                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
                             />
                         </div>
                     </div>

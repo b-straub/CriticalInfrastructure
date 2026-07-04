@@ -1,7 +1,7 @@
-[Sat Jul  4 21:59:58 2026] PHP 8.4.20 Development Server (http://localhost:8000) started
-[Sat Jul  4 22:00:11 2026] [::1]:62753 Accepted
-[Sat Jul  4 22:00:11 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sat Jul  4 22:00:11 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sat Jul  4 22:00:11 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sat Jul  4 22:00:11 2026] Sending 381 bytes to UDP 192.168.178.132:8080 Payload: 2c0176953d342087b72f46ab;3e0debcf408ff89ecff7b3b7bd0cf2249cd7c01dba01f4ea16528794fb7efad0d7aba6beaf38bbc1e4f51768a5a7bc57d6699e413cd812cb67ca8bef05bbd5843748478808e141433ca2bfadcf69d9197aa2e5b147d53e466d73c448014ec0b5038c85acf10f731361fc5a58f401da83f6e4e1dfaebf32ab3308a92e2134df8676ad7f4ded73a3dbab650a575bec8b488f56ba232ea7c834fd97f89523dd9587aa5155b127dfe29d5456057b465e4a139571
-[Sat Jul  4 22:00:11 2026] [::1]:62753 Closing
+[Sat Jul  4 22:40:17 2026] PHP 8.4.20 Development Server (http://localhost:8000) started
+[Sat Jul  4 22:40:39 2026] [::1]:63814 Accepted
+[Sat Jul  4 22:40:39 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sat Jul  4 22:40:39 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sat Jul  4 22:40:39 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sat Jul  4 22:40:39 2026] Sending 448 bytes to UDP 192.168.178.132:8080 Payload: 0395271052d03e2d56ef147edb83363cdabf91f8d8b758e0c1aeec2d08150866;97bd5d4726029aeefdada70f;6e3b95cc78ecb89b02bcbfbf93a5c59fa1e43206095b001d17174ea7b36270f5ad0a09c068897bed47e4875fdab928aa58d07cd0431918b2f913932e3e14013e636f668a680175bfaf6388dfd6970e014226d665720151a232318cb4c5f0fa7d6e7476015a082ea7b91b322dca822055d08fa8b12fdeb3b9228659320e285ebcacce01f50a57193bc0830649d6d62bc36f8a5c813074738dad2db406964bdbb4657efa4d449046958e72d1787bea91932e8fa5
+[Sat Jul  4 22:40:41 2026] [::1]:63814 Closing

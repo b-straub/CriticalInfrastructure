@@ -20,30 +20,23 @@ $payload = file_get_contents('php://input');
 $esp_ip = $_GET['ip'] ?? '192.168.1.100';
 $port = 8080;
 
-$sock = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-if (!$sock) {
-    http_response_code(500);
-    echo "Could not create UDP socket";
-    exit(1);
-}
-
-// Aggressive timeout of 2 seconds for embedded robustness
-socket_set_option($sock, SOL_SOCKET, SO_RCVTIMEO, ["sec" => 2, "usec" => 0]);
-
-error_log("Sending " . strlen($payload) . " bytes to UDP $esp_ip:$port Payload: $payload");
-
-// Send the raw payload over UDP to the ESP32
-socket_sendto($sock, $payload, strlen($payload), 0, $esp_ip, $port);
-
-$buf = '';
-// Wait for the ESP32 to reply
-$bytes_received = @socket_recvfrom($sock, $buf, 1024, 0, $esp_ip, $port);
-socket_close($sock);
-
-if ($bytes_received === false) {
+$fp = @fsockopen($esp_ip, $port, $errno, $errstr, 2.0);
+if (!$fp) {
     http_response_code(504); // Gateway Timeout
-    echo "ESP32 UDP Timeout";
+    echo "ESP32 TCP Timeout or Connection Refused";
 } else {
+    stream_set_timeout($fp, 2);
+    error_log("Sending " . strlen($payload) . " bytes to TCP $esp_ip:$port Payload: $payload");
+    fwrite($fp, $payload);
+    
+    $buf = '';
+    while (!feof($fp)) {
+        $data = fread($fp, 1024);
+        if ($data === false || strlen($data) == 0) break;
+        $buf .= $data;
+    }
+    fclose($fp);
+    
     http_response_code(200);
     echo $buf;
 }
