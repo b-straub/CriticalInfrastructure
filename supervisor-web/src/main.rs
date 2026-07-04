@@ -262,27 +262,12 @@ impl Component for App {
                                                         
                                                         if dec_cipher.decrypt_in_place_detached(resp_nonce, b"", msg, resp_tag).is_ok() {
                                                             if let Ok(plaintext) = core::str::from_utf8(msg) {
-                                                                let mut inner_parts = plaintext.split(';');
-                                                                let esp_msg = inner_parts.next().unwrap_or("");
-                                                                let esp_sig_hex = inner_parts.next().unwrap_or("");
-                                                                
-                                                                let mut sig_bytes = [0u8; 64];
-                                                                if esp_sig_hex.len() == 128 {
-                                                                    for i in 0..64 {
-                                                                        sig_bytes[i] = u8::from_str_radix(&esp_sig_hex[i*2..i*2+2], 16).unwrap_or(0);
-                                                                    }
-                                                                    let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-                                                                    let esp_signing_key = SigningKey::from_bytes(&esp_pub_bytes);
-                                                                    let esp_verifying_key = esp_signing_key.verifying_key();
-                                                                    use ed25519_dalek::Verifier;
-                                                                    if esp_verifying_key.verify(esp_msg.as_bytes(), &sig).is_ok() {
-                                                                        web_sys::console::log_1(&format!("ESP32 Verified Response: {}", esp_msg).into());
-                                                                    } else {
-                                                                        web_sys::console::log_1(&"ESP32 Response signature verification failed!".into());
-                                                                    }
+                                                                web_sys::console::log_1(&format!("ESP32 Verified Response: {}", plaintext).into());
+                                                                let error_text = if plaintext.contains("Decryption Failed") || plaintext.contains("tampered") || plaintext.contains("Invalid") {
+                                                                    Some(plaintext.to_string())
                                                                 } else {
-                                                                    web_sys::console::log_1(&"ESP32 Response missing valid signature!".into());
-                                                                }
+                                                                    None
+                                                                };
                                                             }
                                                         } else {
                                                             web_sys::console::log_1(&"Failed to decrypt ESP32 response!".into());

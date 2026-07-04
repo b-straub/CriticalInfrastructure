@@ -494,21 +494,11 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                         }
                     }
                     
-                    // Encrypt and sign response
+                    // Encrypt response (Authentication is provided by AES-GCM tag)
                     let mut final_response = heapless::String::<1024>::new();
-                    use ed25519_dalek::Signer;
-                    let signing_key = ed25519_dalek::SigningKey::from_bytes(&supervisor_key);
-                    let sig = signing_key.sign(response_msg.as_bytes());
-                    
-                    let mut sig_hex = heapless::String::<128>::new();
-                    for b in sig.to_bytes() {
-                        use core::fmt::Write;
-                        let _ = write!(&mut sig_hex, "{:02x}", b);
-                    }
-                    
                     let mut plaintext = heapless::String::<256>::new();
                     use core::fmt::Write;
-                    let _ = write!(&mut plaintext, "{};{}", response_msg, sig_hex);
+                    let _ = write!(&mut plaintext, "{}", response_msg);
                     
                     #[allow(deprecated)]
                     use aes_gcm::{Aes256Gcm, Key, Nonce};
