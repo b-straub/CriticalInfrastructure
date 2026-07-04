@@ -1,5 +1,5 @@
 use iced::widget::{button, column, row, text, text_input};
-use iced::{Center, Element, Task, Theme};
+use iced::{Center, Element, Task};
 use std::io::Write;
 use std::net::TcpStream;
 
@@ -60,7 +60,7 @@ impl RemoteControl {
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let ip_input = text_input("IP Address", &self.ip_address)
             .on_input(Message::IpAddressChanged)
             .padding(10);
