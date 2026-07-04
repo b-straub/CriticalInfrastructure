@@ -312,6 +312,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                 if let Ok(plaintext) = core::str::from_utf8(msg) {
                                     let mut inner_parts = plaintext.split(';');
                                     let role = inner_parts.next().unwrap_or("");
+                                    let is_supervisor = role == "Supervisor" || role == "supervisor@critical.infra" || role.eq_ignore_ascii_case("supervisor");
                                     let cmd = inner_parts.next().unwrap_or("");
                                     let sig_hex = inner_parts.next().unwrap_or("");
                                     
@@ -333,7 +334,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                         let mut role_authorized = false;
                                         
                                         if let Ok(supervisor_verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&supervisor_key) {
-                                            if role == "Supervisor" || role == "supervisor@critical.infra" {
+                                            if is_supervisor {
                                                 role_pubkey = supervisor_verifying_key.to_bytes();
                                                 role_authorized = true;
                                             } else {
@@ -371,7 +372,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                     let mut allowed = false;
                                                     let mut color_name = "Unknown";
                                                     
-                                                    if cmd.starts_with("ADD_ROLE ") && role == "Supervisor" {
+                                                    if cmd.starts_with("ADD_ROLE ") && is_supervisor {
                                                         let mut cmd_parts = cmd.split_whitespace();
                                                         cmd_parts.next(); // skip ADD_ROLE
                                                         if let (Some(new_role), Some(new_pk_hex), Some(new_cert_hex)) = (cmd_parts.next(), cmd_parts.next(), cmd_parts.next()) {
@@ -433,10 +434,10 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                             allowed = true;
                                                             color_name = "Green";
                                                         } else if cmd.starts_with("COLOR yellow") {
-                                                            if role == "User" || role == "Admin" || role == "Supervisor" { allowed = true; }
+                                                            if role == "User" || role == "Admin" || is_supervisor { allowed = true; }
                                                             color_name = "Yellow";
                                                         } else if cmd.starts_with("COLOR red") {
-                                                            if role == "Admin" || role == "Supervisor" { allowed = true; }
+                                                            if role == "Admin" || is_supervisor { allowed = true; }
                                                             color_name = "Red";
                                                     }
                                                     
