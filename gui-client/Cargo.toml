@@ -6,6 +6,6 @@ default-run = "gui-client"
 
 [dependencies]
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
-iced = "0.14.0"
+iced = { version = "0.14.0", features = ["tokio"] }
 rand = "0.8"
 tokio = { version = "1.52.3", features = ["full"] }

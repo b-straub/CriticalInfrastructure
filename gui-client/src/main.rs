@@ -1,11 +1,11 @@
 use iced::widget::{button, column, row, text, text_input, pick_list};
 use iced::{Element, Task};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use ed25519_dalek::{SigningKey, Signer};
 
 pub fn main() -> iced::Result {
-    iced::application(App::default, App::update, App::view)
+    iced::application(App::new, App::update, App::view)
         .title("Critical Infrastructure Control")
         .run()
 }
@@ -47,6 +47,8 @@ struct App {
     ip_address: String,
     status: String,
     role: Role,
+    pir_status: bool,
+    alarm_active: bool,
 }
 
 impl Default for App {
@@ -56,6 +58,8 @@ impl Default for App {
             ip_address: saved_ip.trim().to_string(),
             status: String::from("Waiting..."),
             role: Role::Guest,
+            pir_status: false,
+            alarm_active: false,
         }
     }
 }
@@ -65,9 +69,16 @@ enum Message {
     IpAddressChanged(String),
     SendColor(&'static str),
     RoleSelected(Role),
+    PollPir,
+    PirResult(Option<(bool, bool)>),
+    CommandResult(String),
 }
 
 impl App {
+    fn new() -> (Self, Task<Message>) {
+        (App::default(), Task::perform(async {}, |_| Message::PollPir))
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::IpAddressChanged(ip) => {
@@ -78,6 +89,45 @@ impl App {
             Message::RoleSelected(role) => {
                 self.role = role;
                 Task::none()
+            }
+            Message::PollPir => {
+                let ip = self.ip_address.trim().to_string();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            if ip.is_empty() { return None; }
+                            let mut connect_addr = ip;
+                            if !connect_addr.contains(':') {
+                                connect_addr.push_str(":8080");
+                            }
+                            if let Ok(mut stream) = TcpStream::connect(&connect_addr) {
+                                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+                                let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(200)));
+                                if stream.write_all(b"GET_PIR").is_ok() {
+                                    let mut buf = [0; 32];
+                                    if let Ok(n) = stream.read(&mut buf) {
+                                        let resp = String::from_utf8_lossy(&buf[..n]);
+                                        let mut pir = false;
+                                        let mut alarm = false;
+                                        if resp.contains("PIR 1") { pir = true; }
+                                        if resp.contains("ALARM 1") { alarm = true; }
+                                        return Some((pir, alarm));
+                                    }
+                                }
+                            }
+                            None
+                        }).await.unwrap_or(None)
+                    },
+                    Message::PirResult
+                )
+            }
+            Message::PirResult(Some((pir_status, alarm_active))) => {
+                self.pir_status = pir_status;
+                self.alarm_active = alarm_active;
+                Task::perform(async { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }, |_| Message::PollPir)
+            }
+            Message::PirResult(None) => {
+                Task::perform(async { tokio::time::sleep(std::time::Duration::from_millis(500)).await; }, |_| Message::PollPir)
             }
             Message::SendColor(color_cmd) => {
                 let sk_bytes = self.role.get_secret_key();
@@ -90,24 +140,36 @@ impl App {
                 }
                 
                 let payload = format!("{};{};{}", self.role.as_str(), color_cmd, sig_hex);
+                let ip = self.ip_address.trim().to_string();
+                let role_str = self.role.as_str().to_string();
                 
-                let mut connect_addr = self.ip_address.trim().to_string();
-                if !connect_addr.contains(':') {
-                    connect_addr.push_str(":8080");
-                }
+                self.status = format!("Sending '{}'...", color_cmd);
                 
-                match TcpStream::connect(&connect_addr) {
-                    Ok(mut stream) => {
-                        if let Err(e) = stream.write_all(payload.as_bytes()) {
-                            self.status = format!("Failed to send: {}", e);
-                        } else {
-                            self.status = format!("Sent '{}' as {}", color_cmd, self.role.as_str());
-                        }
-                    }
-                    Err(e) => {
-                        self.status = format!("Connection failed: {}", e);
-                    }
-                }
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let mut connect_addr = ip;
+                            if !connect_addr.contains(':') {
+                                connect_addr.push_str(":8080");
+                            }
+                            match TcpStream::connect(&connect_addr) {
+                                Ok(mut stream) => {
+                                    let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(1000)));
+                                    if let Err(e) = stream.write_all(payload.as_bytes()) {
+                                        format!("Failed to send: {}", e)
+                                    } else {
+                                        format!("Sent '{}' as {}", color_cmd, role_str)
+                                    }
+                                }
+                                Err(e) => format!("Connection failed: {}", e),
+                            }
+                        }).await.unwrap_or_else(|e| format!("Task error: {}", e))
+                    },
+                    Message::CommandResult
+                )
+            }
+            Message::CommandResult(res) => {
+                self.status = res;
                 Task::none()
             }
         }
@@ -134,11 +196,37 @@ impl App {
         ]
         .spacing(20);
 
+        let cancel_btn = button("🔇 Cancel Alarm");
+        let cancel_btn = if self.alarm_active {
+            cancel_btn.on_press(Message::SendColor("CLEAR alarm"))
+        } else {
+            cancel_btn
+        };
+
+        let siren_buttons = row![cancel_btn].spacing(20);
+
+        let pir_indicator = column![
+            if self.alarm_active {
+                text("🚨 ALARM ACTIVE 🚨")
+                    .size(40)
+                    .color(iced::Color::from_rgb(1.0, 0.0, 0.0))
+            } else {
+                text("")
+            },
+            if self.pir_status {
+                text("PIR Sensor: 🔴 MOTION DETECTED").size(24)
+            } else {
+                text("PIR Sensor: 🟢 Clear").size(24)
+            }
+        ].spacing(15).align_x(iced::Alignment::Center);
+
         let content = column![
-            text("ESP32 LED Controller").size(30),
+            text("ESP32 Security Control").size(30),
             ip_input,
+            pir_indicator,
             role_picker,
             buttons,
+            siren_buttons,
             text(&self.status).size(16)
         ]
         .spacing(20)

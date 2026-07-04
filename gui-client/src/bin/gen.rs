@@ -1,4 +1,4 @@
-use ed25519_dalek::{SigningKey, SecretKey};
+use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 fn main() {
     let mut csprng = OsRng;

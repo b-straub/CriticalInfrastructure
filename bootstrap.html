@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Critical Infrastructure - Supervisor Bootstrap</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #121212; color: #fff; padding: 40px; }
+        .container { max-width: 600px; margin: 0 auto; background: #1e1e1e; padding: 30px; border-radius: 12px; }
+        button { background: #4caf50; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; margin-top: 20px; }
+        button:hover { background: #45a049; }
+        .output { background: #000; padding: 15px; border-radius: 6px; margin-top: 20px; word-break: break-all; font-family: monospace; }
+        .error { color: #ff5252; margin-top: 20px; }
+    </style>
+    <!-- We use noble-curves to derive the Ed25519 public key from the 32-byte PRF seed -->
+    <script src="https://unpkg.com/@noble/curves@1.2.0/ed25519.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h2>Supervisor Key Bootstrap</h2>
+        <p>This will use your FIDO2 key (or Passkey) to generate a deterministic 32-byte seed via the WebAuthn PRF extension.</p>
+        <p>That seed is used as an Ed25519 private key. The resulting Public Key will be printed below to burn into the ESP32 eFuse.</p>
+        
+        <button id="btn-create">Authenticate & Generate Key</button>
+        
+        <div id="result" style="display: none;">
+            <h3>Your Supervisor Public Key (Hex):</h3>
+            <div class="output" id="pubkey-hex"></div>
+            <p>Copy this hex string and pass it to your flash.sh script!</p>
+        </div>
+        <div id="error-msg" class="error"></div>
+    </div>
+
+    <script>
+        // A hardcoded salt for deriving the supervisor key. 
+        // This ensures the FIDO key always returns the exact same 32-byte seed for this RP ID.
+        const prfSalt = new TextEncoder().encode("CriticalInfra_Supervisor_Salt_V1");
+        const paddedSalt = new Uint8Array(32);
+        paddedSalt.set(prfSalt);
+
+        document.getElementById('btn-create').addEventListener('click', async () => {
+            document.getElementById('error-msg').innerText = "";
+            try {
+                // 1. Request a Passkey with PRF extension
+                const credential = await navigator.credentials.create({
+                    publicKey: {
+                        challenge: crypto.getRandomValues(new Uint8Array(32)),
+                        rp: { 
+                            name: "Critical Infrastructure", 
+                            id: "localhost" // MUST be localhost to bypass HTTPS requirement during local dev
+                        },
+                        user: {
+                            id: crypto.getRandomValues(new Uint8Array(16)),
+                            name: "supervisor@critical.infra",
+                            displayName: "System Supervisor"
+                        },
+                        pubKeyCredParams: [{ type: "public-key", alg: -8 }, { type: "public-key", alg: -7 }],
+                        authenticatorSelection: {
+                            residentKey: "required", // Force Discoverable Credential (Passkey)
+                            userVerification: "required"
+                        },
+                        extensions: {
+                            prf: {
+                                eval: { first: paddedSalt }
+                            }
+                        }
+                    }
+                });
+
+                // 2. Extract the PRF output
+                const extensionResults = credential.getClientExtensionResults();
+                if (!extensionResults.prf || !extensionResults.prf.results || !extensionResults.prf.results.first) {
+                    throw new Error("Your authenticator does not support the WebAuthn PRF extension!");
+                }
+
+                const seedBuffer = extensionResults.prf.results.first;
+                const seedArray = new Uint8Array(seedBuffer);
+
+                // 3. Derive Ed25519 Public Key from the PRF Seed
+                // The PRF seed is 32 bytes, which is exactly what Ed25519 expects for a private key.
+                const pubKeyArray = nobleCurves.ed25519.getPublicKey(seedArray);
+
+                // 4. Convert to Hex
+                const hexString = Array.from(pubKeyArray)
+                    .map(b => b.toString(16).padStart(2, '0'))
+                    .join('');
+
+                document.getElementById('pubkey-hex').innerText = hexString;
+                document.getElementById('result').style.display = "block";
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById('error-msg').innerText = "Error: " + err.message;
+            }
+        });
+    </script>
+</body>
+</html>

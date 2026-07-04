@@ -1,7 +1,7 @@
 [workspace]
 members = ["gui-client",
     "master-cli",
-    "shared",
+    "shared", "supervisor-web",
     "target-esp32s3",
 ]
 resolver = "2"

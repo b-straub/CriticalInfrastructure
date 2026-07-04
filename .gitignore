@@ -1,6 +1,24 @@
+# Rust / Cargo
 /target
-/target-esp32s3/target
-/master-cli/target
-/shared/target
-*.rs.bk
-Cargo.lock
+**/target/
+**/*.rs.bk
+# Cargo.lock is NOT ignored because we are building binaries that require strict dependency version locking for ESP32 hardware constraints.
+
+# Keys and Secrets
+/keys/
+*.pem
+*.bin
+
+# Python Virtual Environments
+/esp-env/
+__pycache__/
+*.pyc
+
+# ESP-IDF Bootloader Build Directory
+/bootloader-build/build/
+/bootloader-build/sdkconfig
+/bootloader-build/dependencies.lock
+/bootloader-build/managed_components/
+
+# MacOS
+.DS_Store
