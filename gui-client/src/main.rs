@@ -91,7 +91,12 @@ impl App {
                 
                 let payload = format!("{};{};{}", self.role.as_str(), color_cmd, sig_hex);
                 
-                match TcpStream::connect(&self.ip_address) {
+                let mut connect_addr = self.ip_address.trim().to_string();
+                if !connect_addr.contains(':') {
+                    connect_addr.push_str(":8080");
+                }
+                
+                match TcpStream::connect(&connect_addr) {
                     Ok(mut stream) => {
                         if let Err(e) = stream.write_all(payload.as_bytes()) {
                             self.status = format!("Failed to send: {}", e);
