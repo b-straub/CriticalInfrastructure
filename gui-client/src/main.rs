@@ -1,5 +1,5 @@
 use iced::widget::{button, column, row, text, text_input, pick_list};
-use iced::{Center, Element, Task};
+use iced::{Element, Task};
 use std::io::Write;
 use std::net::TcpStream;
 use ed25519_dalek::{SigningKey, Signer};
@@ -51,8 +51,9 @@ struct App {
 
 impl Default for App {
     fn default() -> Self {
+        let saved_ip = std::fs::read_to_string("ip_config.txt").unwrap_or_else(|_| String::new());
         Self {
-            ip_address: String::new(),
+            ip_address: saved_ip.trim().to_string(),
             status: String::from("Waiting..."),
             role: Role::Guest,
         }
@@ -71,6 +72,7 @@ impl App {
         match message {
             Message::IpAddressChanged(ip) => {
                 self.ip_address = ip;
+                let _ = std::fs::write("ip_config.txt", &self.ip_address);
                 Task::none()
             }
             Message::RoleSelected(role) => {
@@ -107,9 +109,13 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let ip_input = text_input("IP Address", &self.ip_address)
-            .on_input(Message::IpAddressChanged)
-            .padding(10);
+        let ip_input = row![
+            text("ESP32 IP:").size(16),
+            text_input("IP Address (e.g. 192.168.1.5:8080)", &self.ip_address)
+                .on_input(Message::IpAddressChanged)
+                .padding(10)
+                .width(iced::Length::Fixed(250.0))
+        ].spacing(10).align_y(iced::Alignment::Center);
             
         let role_picker = row![
             text("Role:").size(20),
