@@ -219,31 +219,46 @@ async fn main(spawner: Spawner) {
                     use ed25519_dalek::Verifier;
                     if pk.verify(cmd.as_bytes(), &sig).is_err() {
                         info!("Signature verification failed!");
+                        lcd.set_cursor_pos((0, 1));
+                        lcd.write_str_to_cur("Sig Fail        ");
                         continue;
                     }
                     
                     info!("Signature OK. Checking RBAC for role '{}'", role);
                     
                     let mut allowed = false;
-                    if cmd.starts_with("COLOR green") {
-                        // All roles allowed
+                    let color_name = if cmd.starts_with("COLOR green") {
                         allowed = true;
+                        "Green"
                     } else if cmd.starts_with("COLOR yellow") {
                         if role == "User" || role == "Admin" {
                             allowed = true;
                         }
+                        "Yellow"
                     } else if cmd.starts_with("COLOR red") {
                         if role == "Admin" {
                             allowed = true;
                         }
-                    }
+                        "Red"
+                    } else {
+                        "Unknown"
+                    };
+                    
+                    lcd.set_cursor_pos((0, 1));
+                    let mut status_str = heapless::String::<16>::new();
+                    use core::fmt::Write;
                     
                     if !allowed {
                         info!("Permission denied for role '{}' to execute '{}'", role, cmd);
+                        write!(&mut status_str, "{:<6} Reject ", color_name).unwrap();
+                        lcd.write_str_to_cur(&status_str);
                         continue;
                     }
                     
                     info!("Executing command: {}", cmd);
+                    write!(&mut status_str, "{:<6} Pass   ", color_name).unwrap();
+                    lcd.write_str_to_cur(&status_str);
+
                     if cmd.starts_with("COLOR red") {
                         data = [colors::RED; 8];
                     } else if cmd.starts_with("COLOR yellow") {
