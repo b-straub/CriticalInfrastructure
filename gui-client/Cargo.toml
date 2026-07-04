@@ -1,7 +1,8 @@
 [package]
 name = "gui-client"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+default-run = "gui-client"
 
 [dependencies]
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
