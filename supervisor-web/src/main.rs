@@ -436,9 +436,9 @@ impl Component for App {
                                     onclick={ctx.link().callback(|_| Msg::AddRole)}
                                     disabled={self.new_role_name.is_empty()}
                                     style={if self.new_role_name.is_empty() {
-                                        "background: #555; color: #888; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: not-allowed; white-space: nowrap; margin-top: 10px;"
+                                        "background: #555; color: #888; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: not-allowed; white-space: nowrap;"
                                     } else {
-                                        "background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; margin-top: 10px; transition: background 0.3s ease;"
+                                        "background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; transition: background 0.3s ease;"
                                     }}
                                 >
                                     { "Add Role Securely" }
