@@ -192,7 +192,7 @@ impl Component for App {
                 false
             }
             Msg::SendCommand(cmd_str) => {
-                if let (Some(seed), Some(_role)) = (&self.seed, &self.active_role) {
+                if let Some(seed) = &self.seed {
                     let seed_clone = seed.clone();
                     let ip_clone = self.esp32_ip.clone();
                     let hex_pub = self.esp32_pubkey.clone();
