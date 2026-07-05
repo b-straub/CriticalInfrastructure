@@ -24,3 +24,6 @@ __pycache__/
 .DS_Store
 proxy.log
 supervisor-web/dist
+
+# Local per-machine config (personal LAN IP)
+gui-client/ip_config.txt
