@@ -1,55 +1,25 @@
-[Sun Jul  5 08:36:12 2026] PHP 8.4.20 Development Server (http://localhost:8000) started
-[Sun Jul  5 08:36:52 2026] [::1]:51216 Accepted
-[Sun Jul  5 08:36:52 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:36:52 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:36:52 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:36:52 2026] Sending 824 bytes to TCP 192.168.178.132:8080 Payload: 3c3844c23d3f6f655aa67c21896db1eead44d2fa2330d34234b1cbacdf1fcc38;d1bd26ea8a1431b71fb7fd1c;801ca1c9e5a78e03619ef8a9f057e6e4ef760edbe02e3957f2ca213ab21b3b84ed7067745ed3f9567e03a93386509fd4248bbf94dd73a7cd4a267da634788b92068b3256e45d34203801dff9b65903a541c3ad2e4b36b0319799fbeff99320b7e7b95734a16fa0dc8c96e1e1c0e40a07168449e563fbb1bc738d8ff2f8f7d397b54359997f7b045dbe489dd36380b61b9353da14d24715a323617f32eca715c6daddc7937b7bff9bf85a87f153f615bcb63b38f595f96718c86c02910130340c5f35d85b7d5559a94b403c3e33035b5ae772064d228296d98fee09443ae4a18895afdf9ec016d4fed2193b063b2d701ba7eaf44fd97fc82b8466fd674a8955c18db41a82efe3a79df8862628b81dd5dd60b1701f142d0493931960a021250e16a547bf78d034e7c4b472bd5d1317588f87110dfcf205aac3337dba7b295214dadff68cc67eec479f31044f2beef269d63f3e99438e34b5ae1b1ced95812de99d05202110f330a06d2ca4cac8642f8c
-[Sun Jul  5 08:36:54 2026] [::1]:51216 Closing
-[Sun Jul  5 08:37:43 2026] [::1]:51223 Accepted
-[Sun Jul  5 08:37:43 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:37:43 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:37:43 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:37:43 2026] Sending 430 bytes to TCP 192.168.178.132:8080 Payload: 93373d66b027c178029f77a675143b58b3a6659d0d24e0cd29b934544e70b730;ee5196b4c065f739304f967a;042d16379cbe699c2cf5284a6b2de034d065b17a8d9c9f0cb111ddb663e4c4da0b5fd24b5537437212e6e135aaa0fa8a6d9ef9fb8cf88913364ffa1a61dffde943de2453e54173bafaae51073cdfd10795c0f11b8e73f4817eb3deee0fa17c70fb8500e378092ed8eaa29964d52b33ed736b8810ff5b789f51efd7e07904be0bd708e75495c1efb68819c4aba050c897e7f2217e26273e7b690bd0a97a74a1c5cb05a27ac3205a594fbb
-[Sun Jul  5 08:37:45 2026] [::1]:51223 Closing
-[Sun Jul  5 08:37:45 2026] [::1]:51228 Accepted
-[Sun Jul  5 08:37:45 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:37:45 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:37:45 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:37:46 2026] Sending 432 bytes to TCP 192.168.178.132:8080 Payload: dc7a661c45406a8baf266e005a774ea1e9c3dc17305c69c91e759678dafc0f26;7f7f2ad2d3ab5452bd8d0e21;e1c1ec97af50bd128b6d2bc36a5f18d58470079f09943fd406878cae250c2922059d6423ee41e52e27500af1364da803959c8f76b52fae3d32e7508bc38a68ee466e761fb7b20cc66ced364766a2e77bb5dad68b9ccaf4c3ebd24ef0f0894ebd069757f463620e4b105bc61926af3bcabcabd5e12445ecc9833e5d1b4ca6ff6ddba1c89417007d83e31a43e391af4fcaeb30e9c36c5586068d125ac136298c93dc8de7e41198fe564e8c58
-[Sun Jul  5 08:37:49 2026] [::1]:51228 Closing
-[Sun Jul  5 08:38:05 2026] [::1]:51238 Accepted
-[Sun Jul  5 08:38:05 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:05 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:05 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:05 2026] Sending 426 bytes to TCP 192.168.178.132:8080 Payload: 82ae2d0effbb72292a3f4ebc9bd17752426133ac7db46966791baace76c59f54;4c15e75a162c38421f650aac;a84824b45335b408ca229ded7e8aabf2255e4c5e671dab88b7cb72dd1856dab4ef7ba038cdd5362fc2d17605db197554b5a57489324ecb59b006ed00b0127ac28e9571fe68abc943056b4415b2116e962f04d8d8f0ba9570140cdb7891dae55a5d9ef22b38af614470e680e814591c33a1b87f122416809d4b2770a5a8f2e434346558cf8ab145ce72e61a2f4e04bed2a2f9f5a07f27b8ee90339fadc9f96fbafa274faaa291ad6a
-[Sun Jul  5 08:38:08 2026] [::1]:51238 Closing
-[Sun Jul  5 08:38:08 2026] [::1]:51243 Accepted
-[Sun Jul  5 08:38:08 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:08 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:08 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:08 2026] Sending 430 bytes to TCP 192.168.178.132:8080 Payload: 8ca36364aef680819182ccfb35801b5254c95dfd4b63d02831fe602cfcbac03c;fedea520bb9ed1dcecc31f6e;1d3085ea4b5a5cbda32c048bf16478aef5e2c0eb9738088f50cd4fc2411e230c253d5b2894a4c40c18209ba36a4a4d1127ff998a5b12dd3ce21d02ee30a7120b5b3ae79890cc8daa1732567d3d894d2da62ff15168137757aaaf8a0802727c4ef7794ddcebedf8834b6e575bf72385b8c9e2015ef261c7889be83daf47512130e4aa0fafdaeecba98ec45f7ac2ea3903cadc880a181aeb75d4f5880fe33839933eccf5503c54d9a5f56f
-[Sun Jul  5 08:38:10 2026] [::1]:51243 Closing
-[Sun Jul  5 08:38:10 2026] [::1]:51248 Accepted
-[Sun Jul  5 08:38:10 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:10 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:10 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:10 2026] Sending 432 bytes to TCP 192.168.178.132:8080 Payload: df06256281451e033a1dccbf04a5a1288804584dfef69d7550202bcad0237a2a;932cdcc608306458065b0e61;e83a76c79e64bae2b5e6a8b40437bf7ea0eeef2414c9cc75e9c3ebc30420dc27bdba69866ba780e2e32e15c0768d1858f2b8eb3203a0de7471f5156a2e5f08885de7acd19bbb8de338bd5820a83bdf42e0873b9ea05425d27b4e0baaf8c1032ce1d76e2aac45bc6be0ac4121bc047e2a12b3ecb062b542871c20c108e45269a801e78860bf4e0ae1a7519090484e8d399fc6e7f21cc0a7d2ee66e3419c7e12dc476d6e6b7fc62261929452
-[Sun Jul  5 08:38:13 2026] [::1]:51248 Closing
-[Sun Jul  5 08:38:13 2026] [::1]:51253 Accepted
-[Sun Jul  5 08:38:13 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:13 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:13 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:13 2026] Sending 430 bytes to TCP 192.168.178.132:8080 Payload: c8904b09e4a2d5ff575ad0eba917a8cf91758bac0c0a959c2b4e587fb5783374;9c14cfd904738f481e7de487;5344c235bf2432aaebfa18af7d1780e98a913f5dc6033d9034831507004e2be6e3d14364d776b088cc6896a81b9697273ebfffb01446ea14eecd1fbad6ea3c856237f9cd6c1001ae95af056e2b66516ec8fd3a3d8ff850f5a1a7b4dc2cdf4b2daeeac46ad948994d25201017410536438054eeb140402967eeaf87023cc747a2cdb71f3f6ab6085ad9f95690458c6d87fb2937ad5f06b4b488dba4f7a30d1b9ca2722da937ed842281a6
-[Sun Jul  5 08:38:16 2026] [::1]:51253 Closing
-[Sun Jul  5 08:38:19 2026] [::1]:51258 Accepted
-[Sun Jul  5 08:38:19 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:19 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:19 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:19 2026] Sending 430 bytes to TCP 192.168.178.132:8080 Payload: a6bfd0a629bf291ec11ca14e5bf7abc95afd228c776d0fff931b37ff86296c2f;ad9c29d1b77549c070a0954b;afaf990f0a0961ed06899fd2422095c0567f95a53ca5ca5a502b24fa9f7d483d4c8143f132554d40701c684f70ca6c9772bea5a1ea0e03a64a51a7c5d055b3145b68e5a6441791dd84259e3f9a0c6094f6e78e5906b551ef08a1c9852c7dac1354f8b9bc594b4c78c2d0f9105f225ef4d12858585c04f967148416f7c030e87cb5a41cea952f50ac80c7a1f85683f4230b55fe3bc279a61227da30c1352014cbcada79e772f041433f3a
-[Sun Jul  5 08:38:21 2026] [::1]:51258 Closing
-[Sun Jul  5 08:38:22 2026] [::1]:51263 Accepted
-[Sun Jul  5 08:38:22 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:22 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:22 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
-[Sun Jul  5 08:38:22 2026] Sending 426 bytes to TCP 192.168.178.132:8080 Payload: 59e4b9f412b4caf5dff077b3c23a4d787a97f96b8a4a3b567f4e653cec564178;d45268008b00181aea0f6dc0;a67400b0e82072ddf3379dbcf0da6c68b52101d343a8b3f12bbeb7f690691e49a2e963576e48e4d2466c7373298662a378c6b6b436307af5f64dc9cb7acd1366ebf2e771105d2bd95d3daf90b2baddcaef57365b6b165de5b92f8233b8ea21ceefb0858dc93b2296ad8a8c73b6b907bed41811efba35b11cfe3ca24cfc6c35adb93b0d47eb68bbfb0b0ca4bf2f1e688af101c36d056aa02014d7d389df8ff96ced212bae943cd60f
-[Sun Jul  5 08:38:25 2026] [::1]:51263 Closing
+[Sun Jul  5 08:57:04 2026] PHP 8.4.20 Development Server (http://localhost:8000) started
+[Sun Jul  5 08:57:44 2026] [::1]:51397 Accepted
+[Sun Jul  5 08:57:44 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:57:44 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:57:44 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:57:44 2026] Sending 420 bytes to TCP 192.168.178.132:8080 Payload: bf687fd87f5c195361e4996bc06243f727d455d15595b1d0fade34aae1fcc640;49dadc116f6f6d59de82e38a;7ec10ee87906a181ba05f1f28efa64a808cca8187fd4cbe7cf869014c0ba765d83ceeb864106f6784450d5bb8ca696db7880c09ccc4b91869ad8c82ede24bb23009b406d4c28e995b4600c2370f22e4630a74fc15e9fc4f143140944f729c7d6315b5eb877ae06235a0baeecfbdd3aceb889b83036a6600d29701236293b314ff912729ab3894d68ff0c9315ce49f6920905ef32724a02b8dc0f0cd7346eaa3aed67227aec
+[Sun Jul  5 08:57:46 2026] [::1]:51397 Closing
+[Sun Jul  5 08:58:02 2026] [::1]:51402 Accepted
+[Sun Jul  5 08:58:02 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:02 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:02 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:02 2026] Sending 430 bytes to TCP 192.168.178.132:8080 Payload: a95c213c188b200d8875600be52c7e9ca3097a35f6547984fded2a284de7a858;eb89da72bd648d7fc1dab75a;b8bcd1cbcd64f3d62f22a10f11380c4a1e0e3b94b7436c7d75629accf7c6cb3ae02dd7ab25d13c4102ad3bdbd758896c257239fd2cc85c7843c51d64ead842ee08ff4baa4630490bf07de347b0150c9487eab3732660024334512fb72c9555f191eb1bd3d9a27097f601a3b0fe01988aaf0c7a3519f45db4fd4740792ce352736c71f335d0de06188ca268d673ab48845e33cf212fabb2bd55a87387b9e1a4efa5851eded09bf07d5b6a
+[Sun Jul  5 08:58:05 2026] [::1]:51402 Closing
+[Sun Jul  5 08:58:17 2026] [::1]:51408 Accepted
+[Sun Jul  5 08:58:17 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:17 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:17 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:17 2026] Sending 426 bytes to TCP 192.168.178.132:8080 Payload: 8bf293d86c105233b383662cfa06db761269b421cd241e18163d0ed0d706670b;1717516757e86a2e2b3c62de;22ea45a3422e6aa6aafd2923573a2747a4765f5b8304947bc0d21529f83c7ac7fbdb46c7344db7238f1c751b022eab4ec8871a98697864fa8545c37346b7dc08d587a42a94af9bd1785e23f7d6eb1c46a2c00f94e0e8c497888df7d74e01da08ab093f701a963d4dde2db7df1bc34caffcb2cdf2dfecdf3bb70079c8883d23665a38da46f14e10ffd7c1576c18d13673826979cb68440e2a374059d2abda8ec5170908afe3d37f8b
+[Sun Jul  5 08:58:20 2026] [::1]:51408 Closing
+[Sun Jul  5 08:58:46 2026] [::1]:51414 Accepted
+[Sun Jul  5 08:58:46 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:46 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:46 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:58:46 2026] Sending 428 bytes to TCP 192.168.178.132:8080 Payload: d68cdb1b78f46c45530e9039ee590183525fce09eded73f43809f8e4f8d31656;d6a58ef9b9641ad620f1a901;08ec49a0e98ce31770999d98f90aadce76c8d0fb7f2073b1b54b637ca2ac61b3b0ba8e1cefa42529fb11185608c87e52311cefc4fc42fac7330f750c729606cd7e13628f3d62df42f9e6c37335f5ab4fc6ad06cba8b0351cef5dea154cbe682cddb5d8cd82ef3f5e44db285703c8c5d380891051d31c11609c2cb389ef03732f7f348242898500fcb8b4077dd795fc1444a44f10fa7c5e82ee7cf9d4666e584c1524ea0bfc5a64be22
+[Sun Jul  5 08:58:48 2026] [::1]:51414 Closing
