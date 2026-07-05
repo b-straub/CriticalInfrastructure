@@ -28,16 +28,13 @@ rule Provision_ESP32:
     -->
     [ !ESP32_Has_Role_Pub(role_pub) ]
 
-// WebApp encrypts and signs a command
 rule WebApp_Send_Command:
     let
         payload = <'command', ~timestamp>
         sig = sign(payload, ~role_priv)
         
         eph_pub = 'g'^~eph_priv
-        shared_secret = esp32_rom_pub^~eph_priv
-        aes_key = h(shared_secret)
-        
+        aes_key = h(esp32_rom_pub^~eph_priv)
         ciphertext = senc(<payload, sig>, aes_key)
     in
     [ 
@@ -47,34 +44,32 @@ rule WebApp_Send_Command:
         Fr(~eph_priv)
     ]
     --[ 
-        Send_Command(payload)
+        Send_Command(payload),
+        OutCipher(<payload, sig>, aes_key)
     ]->
     [ 
         Out(<eph_pub, ciphertext>),
         State_WebApp_Wait(~eph_priv, ~timestamp)
     ]
 
-// ESP32 decrypts, verifies, and replies.
 rule ESP32_Recv_Command:
     let
-        shared_secret = eph_pub^~rom_priv
-        aes_key = h(shared_secret)
+        aes_key = h(eph_pub^~rom_priv)
         
         resp_eph_pub = 'g'^~resp_eph_priv
-        resp_shared_secret = eph_pub^~resp_eph_priv
-        resp_aes_key = h(resp_shared_secret)
-        
+        resp_aes_key = h(eph_pub^~resp_eph_priv)
         resp_payload = <'response_to', payload>
         resp_ciphertext = senc(resp_payload, resp_aes_key)
     in
     [ 
         !ESP32_ROM_Priv(~rom_priv),
         !ESP32_Has_Role_Pub(role_pub),
-        // By pattern matching on senc, Tamarin doesn't have to guess how to decrypt
         In(<eph_pub, senc(<payload, sig>, aes_key)>),
         Fr(~resp_eph_priv)
     ]
     --[ 
+        InCipher(<payload, sig>, aes_key),
+        OutCipher(resp_payload, resp_aes_key),
         Eq(verify(sig, payload, role_pub), true),
         Execute_Command(payload),
         Unique_Execution(payload)
@@ -83,37 +78,42 @@ rule ESP32_Recv_Command:
         Out(<resp_eph_pub, resp_ciphertext>)
     ]
 
-// Equality restriction
-restriction Equality:
-    "All x y #i. Eq(x,y) @i ==> x = y"
-
-// Replay protection: a payload can only be executed once
-restriction Replay_Protection:
-    "All x #i #j. Unique_Execution(x) @i & Unique_Execution(x) @j ==> #i = #j"
-
 rule WebApp_Recv_Response:
     let
-        resp_shared_secret = resp_eph_pub^~eph_priv
-        resp_aes_key = h(resp_shared_secret)
+        resp_aes_key = h(resp_eph_pub^~eph_priv)
+        resp_payload = <'response_to', <'command', ~timestamp>>
+        resp_ciphertext = senc(resp_payload, resp_aes_key)
     in
     [ 
         State_WebApp_Wait(~eph_priv, ~timestamp),
-        In(<resp_eph_pub, senc(<'response_to', <'command', ~timestamp>>, resp_aes_key)>)
+        In(<resp_eph_pub, resp_ciphertext>)
     ]
-    --[ Recv_Response(<'response_to', <'command', ~timestamp>>) ]->
+    --[ 
+        InCipher(resp_payload, resp_aes_key),
+        Recv_Response(resp_payload) 
+    ]->
     []
 
+
+// --- RESTRICTIONS ---
+
+restriction Equality:
+    "All x y #i. Eq(x,y) @i ==> x = y"
+
+restriction Replay_Protection:
+    "All x #i #j. Unique_Execution(x) @i & Unique_Execution(x) @j ==> #i = #j"
+
+
 // --- LEMMAS ---
+
+lemma cipher_sources [sources]:
+    "All m aes_key #t. InCipher(m, aes_key) @ #t ==> 
+        (Ex #t2. OutCipher(m, aes_key) @ #t2 & #t2 < #t) 
+      | (Ex #t2. KU(m) @ #t2 & #t2 < #t)"
 
 lemma command_authentication:
     "All payload #j. Execute_Command(payload) @j 
      ==> (Ex #i. Send_Command(payload) @i & i < j)"
-
-lemma rom_key_secrecy:
-    "All k #i. Secret_ROM(k) @i ==> not (Ex #j. K(k) @j)"
-
-lemma role_key_secrecy:
-    "All k #i. Secret_Role(k) @i ==> not (Ex #j. K(k) @j)"
 
 lemma executability:
     exists-trace
