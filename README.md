@@ -126,4 +126,4 @@ See [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md) for the d
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
-*Made with [**Google Antigravity**](https://antigravity.google) (Antigravity CLI `agy`) 🚀*
+*Made with [**Google Antigravity**](https://antigravity.google) (Antigravity CLI `agy`) 🚀 + [**Claude Opus**](https://claude.com)*
