@@ -64,6 +64,61 @@ graph TD
 
 ![Hardware Setup](assets/hardware_setup.jpg)
 
+## Building & Running
+
+### Hardware
+
+Every part is in a single kit — the [Freenove Ultimate Starter Kit for ESP32-S3](https://www.amazon.de/dp/B0BMQ2CPQN) (board, breadboard, WS2812 LEDs, I2C 16x2 LCD, DHT11, jumpers, resistors). Wire it per the schematic above:
+
+- WS2812 LED ring → DIN on **GPIO 4**
+- I2C LCD (address `0x27`) → SDA **GPIO 8**, SCL **GPIO 9**
+- DHT11 → DATA on **GPIO 21**, with a **10 kΩ pull-up** between DATA and VCC (3V3)
+
+### Prerequisites
+
+- Rust + the Espressif toolchain via [`espup`](https://github.com/esp-rs/espup): `espup install`, then `source ~/export-esp.sh` (used only for the firmware; the toolchain is pinned by `rust-toolchain.toml`)
+- `cargo install espflash trunk` and `rustup target add wasm32-unknown-unknown`
+- `php` (for the dashboard's HTTP→device proxy)
+
+### 1. Flash the firmware
+
+```sh
+./flash.sh <WIFI_SSID> <WIFI_PASSWORD> <SUPERVISOR_PUBKEY_HEX>
+```
+
+Wi-Fi credentials and the trusted supervisor key are baked in at compile time (`option_env!`) — never stored in the repo. On boot the device prints three public keys over serial; note them for step 2:
+
+```
+SSOT Supervisor PubKey:                <the key you flashed>
+ESP32 Ed25519 Response-Signing PubKey: <64 hex chars>
+ESP32 X25519 PubKey:                   <64 hex chars>
+```
+
+### 2. Run the dashboard
+
+```sh
+./run_dashboard.sh    # PHP proxy on :8000 + `trunk serve` for the Yew webapp
+```
+
+Open the served URL, click **Register New Passkey** (WebAuthn PRF), then fill the connection panel — nothing is hardcoded, and the values persist in the browser's LocalStorage:
+
+| Field | Value |
+|-------|-------|
+| ESP32 IP | shown on the LCD |
+| ESP32 ROM Pubkey | the **X25519** key from the boot log |
+| ESP32 Sig Pubkey | the **Ed25519 Response-Signing** key from the boot log |
+| Supervisor Pubkey | your supervisor public key |
+
+### Production hardening (optional)
+
+Derive the device identity from a read-protected eFuse key instead of flash storage:
+
+```sh
+cd target-esp32s3 && cargo build --release --features efuse-hmac-identity
+```
+
+See [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md).
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
