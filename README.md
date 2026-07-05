@@ -31,11 +31,13 @@ graph TD
     classDef leds fill:#27ae60,stroke:#2ecc71,stroke-width:2px,color:#fff;
     classDef usb fill:#8e44ad,stroke:#9b59b6,stroke-width:2px,color:#fff;
     classDef action fill:#e67e22,stroke:#d35400,stroke-width:2px,color:#fff;
+    classDef sensor fill:#16a085,stroke:#1abc9c,stroke-width:2px,color:#fff;
 
     %% Components
     ESP["Freenove ESP32-S3 WROOM Board<br>(Hardware Crypto Engine)"]:::esp
     Ring["8-LED WS2812 Ring<br>(Status Indicator)"]:::leds
     LCD["I2C 16x2 LCD Display<br>(Status / IP Address)"]:::display
+    DHT11["DHT11 Temp / Humidity Sensor<br>(10kΩ DATA pull-up)"]:::sensor
     USB["USB-C Power / Data<br>(Secure Flashing)"]:::usb
 
     %% Connections
@@ -46,13 +48,18 @@ graph TD
     
     %% Display Connection Bundle
     ESP -->|"<b>Display Header</b><br>🟫 Brown: GND<br>🟥 Red: VDD<br>🟧 Orange: SDA (GPIO 8)<br>🟨 Yellow: SCL (GPIO 9)"| LCD
+
+    %% DHT11 Sensor Connection Bundle
+    ESP -->|"<b>Sensor Header</b><br>🟥 Red: VCC (3V3)<br>⬛ Black: GND<br>⬜ White: DATA (GPIO 21)<br>↕️ 10kΩ pull-up (VCC ↔ DATA)"| DHT11
     
     %% Action Blocks (Styled instead of grey self-loops)
     RingAction("Illuminates based on RBAC Command Escalation:<br>🟩 Green -> Read Sensor Data<br>🟨 Yellow -> Override Safety Thresholds<br>🟥 Red -> Initiate Emergency Shutdown"):::action
-    LCDAction("Displays: IP & Auth Result<br>Line 1: 192.168.178.132<br>Line 2: 'User Green Pass'<br>or 'Yellow Rejected'"):::action
+    LCDAction("Displays: IP & Auth Result<br>Line 1: 192.168.x.x (DHCP)<br>Line 2: 'User Green Pass'<br>or 'Yellow Rejected'"):::action
+    SensorAction("READ_SENSOR command:<br>🟩 Reads temperature + humidity from DHT11<br>Shown on LCD: 'Temp: 24.9C, RH: 47%'<br>🟥 Raises alarm if temp exceeds SET_THRESHOLD"):::action
     
     Ring ===> RingAction
     LCD ===> LCDAction
+    DHT11 ===> SensorAction
 ```
 
 ![Hardware Setup](assets/hardware_setup.jpg)
