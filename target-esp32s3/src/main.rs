@@ -311,8 +311,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                             if cipher.decrypt_in_place_detached(nonce, b"", msg, tag).is_ok() {
                                 if let Ok(plaintext) = core::str::from_utf8(msg) {
                                     let mut inner_parts = plaintext.split(';');
-                                    let role = inner_parts.next().unwrap_or("");
-                                    let is_supervisor = role == "Supervisor" || role == "supervisor@critical.infra" || role.eq_ignore_ascii_case("supervisor");
+                                    let _ignored_role = inner_parts.next().unwrap_or("");
                                     let cmd = inner_parts.next().unwrap_or("");
                                     let sig_hex = inner_parts.next().unwrap_or("");
                                     
@@ -330,46 +329,51 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                         let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
                                         use ed25519_dalek::Verifier;
                                         
-                                        let mut role_pubkey = [0u8; 32];
                                         let mut role_authorized = false;
+                                        let mut is_supervisor = false;
+                                        let mut authenticated_role = heapless::String::<32>::new();
                                         
                                         if let Ok(supervisor_verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&supervisor_key) {
-                                            if is_supervisor {
-                                                role_pubkey = supervisor_verifying_key.to_bytes();
+                                            // 1. Try Supervisor Key mathematically
+                                            if supervisor_verifying_key.verify(cmd.as_bytes(), &sig).is_ok() {
                                                 role_authorized = true;
+                                                is_supervisor = true;
+                                                let _ = core::fmt::Write::write_str(&mut authenticated_role, "Supervisor");
                                             } else {
+                                                // 2. Check dynamic roles mathematically
                                                 for entry in unsafe { &*core::ptr::addr_of!(ROLES) }.iter() {
-                                                    if entry.name == role {
-                                                        let mut cert_msg = heapless::String::<128>::new();
-                                                        use core::fmt::Write;
-                                                        let mut pk_hex = heapless::String::<64>::new();
-                                                        for b in entry.pubkey {
-                                                            let _ = write!(&mut pk_hex, "{:02x}", b);
-                                                        }
-                                                        let _ = write!(&mut cert_msg, "ROLE:{};PUBKEY:{}", entry.name, pk_hex);
-                                                        
-                                                        let mut sig_arr = [0u8; 64];
-                                                        sig_arr.copy_from_slice(&entry.cert_sig);
-                                                        let cert_sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
-                                                        
-                                                        if supervisor_verifying_key.verify(cert_msg.as_bytes(), &cert_sig).is_ok() {
-                                                            role_pubkey = entry.pubkey;
-                                                            role_authorized = true;
-                                                            break;
-                                                        } else {
-                                                            info!("RAM Tampering Detected for role {}!", role);
+                                                    if let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&entry.pubkey) {
+                                                        if verifying_key.verify(cmd.as_bytes(), &sig).is_ok() {
+                                                            let mut cert_msg = heapless::String::<128>::new();
+                                                            use core::fmt::Write;
+                                                            let mut pk_hex = heapless::String::<64>::new();
+                                                            for b in entry.pubkey {
+                                                                let _ = write!(&mut pk_hex, "{:02x}", b);
+                                                            }
+                                                            let _ = write!(&mut cert_msg, "ROLE:{};PUBKEY:{}", entry.name, pk_hex);
+                                                            
+                                                            let mut sig_arr = [0u8; 64];
+                                                            sig_arr.copy_from_slice(&entry.cert_sig);
+                                                            let cert_sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+                                                            
+                                                            if supervisor_verifying_key.verify(cert_msg.as_bytes(), &cert_sig).is_ok() {
+                                                                role_authorized = true;
+                                                                let _ = write!(&mut authenticated_role, "{}", entry.name);
+                                                                break;
+                                                            } else {
+                                                                info!("RAM Tampering Detected for role {}!", entry.name);
+                                                            }
                                                         }
                                                     }
                                                 }
-                                        }
+                                            }
                                         }
                                         
                                         if role_authorized {
-                                            if let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&role_pubkey) {
-                                                if verifying_key.verify(cmd.as_bytes(), &sig).is_ok() {
-                                                    info!("Authenticated Command: {} (Role: {})", cmd, role);
-                                                    
-                                                    let mut allowed = false;
+                                            let role = &authenticated_role;
+                                            info!("Authenticated Command: {} (Role: {})", cmd, role);
+                                            
+                                            let mut allowed = false;
                                                     let mut color_name = "Unknown";
                                                     
                                                     if cmd.starts_with("ADD_ROLE ") && is_supervisor {
@@ -471,14 +475,8 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                         let _ = write!(&mut status_str, "{:<6} Reject ", color_name);
                                                         lcd.write_str_to_cur(&status_str);
                                                     }
-                                                } else {
-                                                    response_msg = "Signature verification failed";
-                                                }
-                                            } else {
-                                                response_msg = "Invalid Role Pubkey";
-                                            }
                                         } else {
-                                            response_msg = "Role not found or Certificate tampered";
+                                            response_msg = "Signature verification failed or Unknown Role";
                                         }
                                     } else {
                                         response_msg = "Invalid Signature Format";
