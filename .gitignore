@@ -22,3 +22,5 @@ __pycache__/
 
 # MacOS
 .DS_Store
+proxy.log
+supervisor-web/dist
