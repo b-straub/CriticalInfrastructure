@@ -2,11 +2,33 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
+    // NOTE: new variants must be appended (postcard encodes the variant index).
     Admin,
     Operator,
     Observer,
+    Supervisor,
+}
+
+impl Role {
+    /// Every role. The single source of truth for the role set.
+    pub const ALL: [Role; 4] = [Role::Supervisor, Role::Admin, Role::Operator, Role::Observer];
+
+    /// Canonical wire/display name -- the single source of truth for role strings.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Role::Supervisor => "Supervisor",
+            Role::Admin => "Admin",
+            Role::Operator => "Operator",
+            Role::Observer => "Observer",
+        }
+    }
+
+    /// Parse a role from its canonical wire name.
+    pub fn from_wire(s: &str) -> Option<Role> {
+        Role::ALL.into_iter().find(|r| r.as_str() == s)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -25,11 +47,11 @@ pub struct SignedMessage<'a> {
 }
 
 pub mod terminology {
-    // Roles
-    pub const ROLE_SUPERVISOR: &str = "Supervisor";
-    pub const ROLE_ADMIN: &str = "Admin";
-    pub const ROLE_OPERATOR: &str = "Operator";
-    pub const ROLE_OBSERVER: &str = "Observer";
+    // Roles -- derived from the Role enum (single source of truth).
+    pub const ROLE_SUPERVISOR: &str = super::Role::Supervisor.as_str();
+    pub const ROLE_ADMIN: &str = super::Role::Admin.as_str();
+    pub const ROLE_OPERATOR: &str = super::Role::Operator.as_str();
+    pub const ROLE_OBSERVER: &str = super::Role::Observer.as_str();
     
     // Commands
     pub const CMD_COLOR_RED: &str = "COLOR red";
