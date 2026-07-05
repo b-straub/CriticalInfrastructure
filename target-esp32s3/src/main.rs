@@ -632,6 +632,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                     
                     let ephemeral_pub = x25519_dalek::PublicKey::from(ephemeral_pub_bytes);
                     let resp_shared_secret = resp_ephemeral_secret.diffie_hellman(&ephemeral_pub);
+                    use sha2::Digest;
                     let tx_key_hash = sha2::Sha256::digest(resp_shared_secret.as_bytes());
                     
                     #[allow(deprecated)]
