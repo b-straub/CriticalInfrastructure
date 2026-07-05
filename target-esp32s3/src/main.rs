@@ -187,6 +187,13 @@ struct RoleEntry {
 }
 static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
 
+static mut LAST_TEMP: f32 = 0.0;
+static mut LAST_RH: f32 = 0.0;
+static mut THRESHOLD: f32 = 25.0; // Default threshold
+static mut ALARM_ACTIVE: bool = false;
+static mut COMMAND_OVERRIDE_UNTIL: u64 = 0; // ms
+static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
+
     let mut tx_buffer = [0; 4096];
     
     let mut flash = FlashStorage::new();
@@ -308,10 +315,33 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
             use core::fmt::Write;
             if success {
                 let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
+                unsafe {
+                    LAST_TEMP = temp;
+                    LAST_RH = hum;
+                    if temp > THRESHOLD {
+                        ALARM_ACTIVE = true;
+                    }
+                }
             } else {
                 let _ = write!(&mut status_str, "Sensor Error    ");
             }
             lcd.write_str_to_cur(&status_str);
+
+            unsafe {
+                let now = embassy_time::Instant::now().as_millis();
+                if now < COMMAND_OVERRIDE_UNTIL {
+                    let color_copy = COMMAND_OVERRIDE_COLOR;
+                    ws2812.write(color_copy.iter().cloned()).unwrap();
+                } else if ALARM_ACTIVE {
+                    if (now / 500) % 2 == 0 {
+                        ws2812.write([colors::RED; 8].iter().cloned()).unwrap();
+                    } else {
+                        ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                    }
+                } else {
+                    ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                }
+            }
                 }
             }
         };
@@ -379,6 +409,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                     } else { valid_crypto = false; }
                     
                     let mut response_msg = "Invalid Crypto Envelope";
+                    let mut dynamic_msg = heapless::String::<512>::new();
                     
                     if valid_crypto {
                         #[allow(deprecated)]
@@ -539,6 +570,72 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                         } else {
                                                             response_msg = "Malformed ADD_ROLE command";
                                                         }
+                                                    } else if cmd.starts_with(CMD_REVOKE_ROLE) {
+                                                        if role == ROLE_SUPERVISOR {
+                                                            if let Some(target_role) = parts.next() {
+                                                                let mut idx_to_remove = None;
+                                                                let mut r_iter = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.iter().enumerate();
+                                                                while let Some((i, r)) = r_iter.next() {
+                                                                    if r.name == target_role {
+                                                                        idx_to_remove = Some(i);
+                                                                        break;
+                                                                    }
+                                                                }
+                                                                if let Some(idx) = idx_to_remove {
+                                                                    unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.swap_remove(idx);
+                                                                    if let Ok(bytes) = postcard::to_vec::<_, 4096>(unsafe { &*core::ptr::addr_of!(ROLES) }) {
+                                                                        let mut flash = FlashStorage::new();
+                                                                        let mut write_buf = [0u8; 4096];
+                                                                        write_buf[..bytes.len()].copy_from_slice(&bytes);
+                                                                        let _ = flash.write(0x200000, &write_buf);
+                                                                    }
+                                                                    let _ = write!(&mut dynamic_msg, "Role {} revoked", target_role);
+                                                                } else {
+                                                                    let _ = write!(&mut dynamic_msg, "Role {} not found", target_role);
+                                                                }
+                                                                allowed = true;
+                                                                color_name = "System";
+                                                            }
+                                                        }
+                                                    } else if cmd.starts_with(CMD_LIST_ROLES) {
+                                                        if role == ROLE_SUPERVISOR {
+                                                            let _ = write!(&mut dynamic_msg, "ROLES:");
+                                                            for r in unsafe { &*core::ptr::addr_of!(ROLES) }.iter() {
+                                                                let mut pk_hex = heapless::String::<64>::new();
+                                                                for b in r.pubkey { let _ = write!(&mut pk_hex, "{:02x}", b); }
+                                                                let _ = write!(&mut dynamic_msg, "{}:{},", r.name, pk_hex);
+                                                            }
+                                                            allowed = true;
+                                                            color_name = "System";
+                                                        }
+                                                    } else if cmd.starts_with(CMD_READ_SENSOR) {
+                                                        if role == ROLE_OBSERVER || role == ROLE_OPERATOR || role == ROLE_ADMIN || role == ROLE_SUPERVISOR { 
+                                                            allowed = true; 
+                                                            color_name = "Green";
+                                                            let _ = write!(&mut dynamic_msg, "Temp: {:.1}C, RH: {:.1}%", unsafe { LAST_TEMP }, unsafe { LAST_RH });
+                                                        }
+                                                    } else if cmd.starts_with(CMD_SET_THRESHOLD) {
+                                                        if role == ROLE_OPERATOR || role == ROLE_ADMIN || role == ROLE_SUPERVISOR { 
+                                                            if let Some(val_str) = parts.next() {
+                                                                if let Ok(val) = val_str.parse::<f32>() {
+                                                                    unsafe { THRESHOLD = val; }
+                                                                    let _ = write!(&mut dynamic_msg, "Threshold set to {:.1}C", val);
+                                                                    allowed = true; 
+                                                                    color_name = "Yellow";
+                                                                }
+                                                            }
+                                                        }
+                                                    } else if cmd.starts_with(CMD_CLEAR_ALARM) {
+                                                        if role == ROLE_ADMIN || role == ROLE_SUPERVISOR { 
+                                                            unsafe { ALARM_ACTIVE = false; }
+                                                            let _ = write!(&mut dynamic_msg, "Alarm Cleared");
+                                                            allowed = true; 
+                                                            color_name = "Blue";
+                                                        }
+                                                    } else if cmd.starts_with(CMD_WHOAMI) {
+                                                        allowed = true;
+                                                        color_name = "Blue";
+                                                        let _ = write!(&mut dynamic_msg, "{}", role);
                                                     } else if cmd.starts_with(CMD_COLOR_GREEN) {
                                                             if role == ROLE_OBSERVER || role == ROLE_OPERATOR || role == ROLE_ADMIN { allowed = true; }
                                                             color_name = "Green";
@@ -564,16 +661,21 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                         
                                                         if cmd.starts_with(CMD_COLOR_RED) {
                                                             data = [colors::RED; 8];
-                                                        } else if cmd.starts_with(CMD_COLOR_YELLOW) {
+                                                        } else if cmd.starts_with(CMD_COLOR_YELLOW) || cmd.starts_with(CMD_SET_THRESHOLD) {
                                                             data = [colors::YELLOW; 8];
-                                                        } else if cmd.starts_with(CMD_COLOR_GREEN) {
+                                                        } else if cmd.starts_with(CMD_COLOR_GREEN) || cmd.starts_with(CMD_READ_SENSOR) {
                                                             data = [colors::GREEN; 8];
-                                                        } else if cmd.starts_with(CMD_ADD_ROLE) {
+                                                        } else if cmd.starts_with(CMD_CLEAR_ALARM) || cmd.starts_with(CMD_ADD_ROLE) || cmd.starts_with(CMD_REVOKE_ROLE) || cmd.starts_with(CMD_LIST_ROLES) {
                                                             data = [colors::BLUE; 8]; // Blue for system actions
                                                         } else {
                                                             data = [colors::WHITE; 8];
                                                         }
                                                         ws2812.write(data.iter().cloned()).unwrap();
+                                                        
+                                                        unsafe {
+                                                            COMMAND_OVERRIDE_COLOR = data;
+                                                            COMMAND_OVERRIDE_UNTIL = embassy_time::Instant::now().as_millis() + 10_000;
+                                                        }
                                                     } else {
                                                         if response_msg == "Invalid Crypto Envelope" {
                                                             response_msg = "Permission Denied";
@@ -603,9 +705,13 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                     
                     // Encrypt response (Authentication is provided by AES-GCM tag)
                     let mut final_response = heapless::String::<1024>::new();
-                    let mut plaintext = heapless::String::<256>::new();
+                    let mut plaintext = heapless::String::<512>::new();
                     use core::fmt::Write;
-                    let _ = write!(&mut plaintext, "{}", response_msg);
+                    if !dynamic_msg.is_empty() {
+                        let _ = write!(&mut plaintext, "{}", dynamic_msg);
+                    } else {
+                        let _ = write!(&mut plaintext, "{}", response_msg);
+                    }
                     
                     #[allow(deprecated)]
                     use aes_gcm::{Aes256Gcm, Key, Nonce};

@@ -32,6 +32,7 @@ enum Msg {
     UpdateSupervisorPubkey(String),
     AddRole,
     Logout,
+    CommandResponse(String),
 }
 
 struct App {
@@ -45,6 +46,7 @@ struct App {
     supervisor_pubkey: String,
     new_role_name: String,
     new_role_pubkey: String,
+    last_response: Option<String>,
 }
 
 impl Component for App {
@@ -68,6 +70,7 @@ impl Component for App {
             supervisor_pubkey,
             new_role_name: String::new(),
             new_role_pubkey: String::new(),
+            last_response: None,
         }
     }
 
@@ -143,6 +146,16 @@ impl Component for App {
                 self.pubkey_hex = None;
                 self.active_role = None;
                 self.error = None;
+                self.last_response = None;
+                true
+            }
+            Msg::CommandResponse(resp) => {
+                if ["Admin", "Supervisor", "Operator", "Observer"].contains(&resp.as_str()) {
+                    self.active_role = Some(resp);
+                    self.last_response = None;
+                } else {
+                    self.last_response = Some(resp);
+                }
                 true
             }
             Msg::UpdateNewRoleName(name) => {
@@ -189,6 +202,7 @@ impl Component for App {
                     }
                     
                     let window = web_sys::window().unwrap();
+                    let link = ctx.link().clone();
                     spawn_local(async move {
                         let timestamp = js_sys::Date::now() as u64;
                         let signed_payload = format!("{}|{}", timestamp, cmd_str);
@@ -285,17 +299,15 @@ impl Component for App {
                                                         if dec_cipher.decrypt_in_place_detached(resp_nonce, b"", msg, resp_tag).is_ok() {
                                                             if let Ok(plaintext) = core::str::from_utf8(msg) {
                                                                 web_sys::console::log_1(&format!("ESP32 Verified Response: {}", plaintext).into());
-                                                                let _error_text = if plaintext.contains("Decryption Failed") || plaintext.contains("tampered") || plaintext.contains("Permission") {
-                                                                    Some(plaintext.to_string())
-                                                                } else {
-                                                                    None
-                                                                };
+                                                                link.send_message(Msg::CommandResponse(plaintext.to_string()));
                                                             }
                                                         } else {
                                                             web_sys::console::log_1(&"Failed to decrypt ESP32 response!".into());
+                                                            link.send_message(Msg::CommandResponse("Failed to decrypt ESP32 response!".to_string()));
                                                         }
                                                     } else {
                                                         web_sys::console::log_1(&"Invalid encrypted response envelope!".into());
+                                                        link.send_message(Msg::CommandResponse("Invalid encrypted response envelope!".to_string()));
                                                     }
                                                 }
                                             }
@@ -399,67 +411,110 @@ impl Component for App {
                     
                     <hr style="border-color: #333; margin: 30px 0;" />
                     
-                    if self.pubkey_hex.as_deref() == Some(&self.supervisor_pubkey) {
-                        <div style="background: #1e1e1e; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #444;">
-                            <h3 style="margin-top: 0; color: #ffa000;">{ "Supervisor CA Tools" }</h3>
-                            <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32. The certificate signature proves you authorized this Role & PubKey pairing." }</p>
-                            <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
-                                <div style="display: flex; flex-direction: column; min-width: 150px;">
-                                    <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "New Role Name:" }</label>
-                                    <select
-                                        value={self.new_role_name.clone()}
-                                        onchange={ctx.link().callback(|e: Event| {
-                                            let select = e.target_unchecked_into::<web_sys::HtmlSelectElement>();
-                                            Msg::UpdateNewRoleName(select.value())
-                                        })}
-                                        style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 100%; height: 35px;"
-                                    >
-                                        <option value="" disabled=true selected={self.new_role_name.is_empty()}>{ "Select Role..." }</option>
-                                        <option value={ROLE_ADMIN} selected={self.new_role_name == ROLE_ADMIN}>{ ROLE_ADMIN }</option>
-                                        <option value={ROLE_OPERATOR} selected={self.new_role_name == ROLE_OPERATOR}>{ ROLE_OPERATOR }</option>
-                                        <option value={ROLE_OBSERVER} selected={self.new_role_name == ROLE_OBSERVER}>{ ROLE_OBSERVER }</option>
-                                    </select>
-                                </div>
-                                <div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 300px;">
-                                    <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "New Role Ed25519 PubKey:" }</label>
-                                    <input type="text"
-                                        value={self.new_role_pubkey.clone()}
-                                        oninput={ctx.link().callback(|e: InputEvent| {
-                                            let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                            Msg::UpdateNewRolePubkey(input.value())
-                                        })}
-                                        placeholder="64-char hex string"
-                                        style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 100%; height: 35px; box-sizing: border-box; font-family: monospace;"
-                                    />
-                                </div>
-                                <button 
-                                    onclick={ctx.link().callback(|_| Msg::AddRole)}
-                                    disabled={self.new_role_name.is_empty()}
-                                    style={if self.new_role_name.is_empty() {
-                                        "background: #555; color: #888; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: not-allowed; white-space: nowrap;"
-                                    } else {
-                                        "background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; transition: background 0.3s ease;"
-                                    }}
-                                >
-                                    { "Add Role Securely" }
-                                </button>
-                            </div>
+                    if let Some(resp) = &self.last_response {
+                        <div style="background: #2a2a2a; border-left: 4px solid #4caf50; padding: 15px; margin-bottom: 20px; border-radius: 4px; word-break: break-all;">
+                            <strong style="color: #4caf50; display: block; margin-bottom: 5px;">{ "Last ESP32 Response:" }</strong>
+                            <code style="font-family: monospace; color: #fff;">{ resp }</code>
                         </div>
-                    } else {
+                    }
+
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
+                        <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_WHOAMI.to_string()))} style="background: #9c27b0; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                            { "Who Am I (Fetch Role)" }
+                        </button>
+                    </div>
+
+                    if let Some(role) = &self.active_role {
+                        if role == "Supervisor" {
+                            <div style="background: #1e1e1e; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #444;">
+                                <h3 style="margin-top: 0; color: #ffa000;">{ "Supervisor CA Tools" }</h3>
+                                <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32." }</p>
+                                <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                                    <div style="display: flex; flex-direction: column; min-width: 150px;">
+                                        <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "New Role Name:" }</label>
+                                        <select
+                                            value={self.new_role_name.clone()}
+                                            onchange={ctx.link().callback(|e: Event| {
+                                                let select = e.target_unchecked_into::<web_sys::HtmlSelectElement>();
+                                                Msg::UpdateNewRoleName(select.value())
+                                            })}
+                                            style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 100%; height: 35px;"
+                                        >
+                                            <option value="" disabled=true selected={self.new_role_name.is_empty()}>{ "Select Role..." }</option>
+                                            <option value={ROLE_ADMIN} selected={self.new_role_name == ROLE_ADMIN}>{ ROLE_ADMIN }</option>
+                                            <option value={ROLE_OPERATOR} selected={self.new_role_name == ROLE_OPERATOR}>{ ROLE_OPERATOR }</option>
+                                            <option value={ROLE_OBSERVER} selected={self.new_role_name == ROLE_OBSERVER}>{ ROLE_OBSERVER }</option>
+                                        </select>
+                                    </div>
+                                    <div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 300px;">
+                                        <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "Role Ed25519 PubKey:" }</label>
+                                        <input type="text"
+                                            value={self.new_role_pubkey.clone()}
+                                            oninput={ctx.link().callback(|e: InputEvent| {
+                                                let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                                Msg::UpdateNewRolePubkey(input.value())
+                                            })}
+                                            placeholder="64-char hex string"
+                                            style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 100%; height: 35px; box-sizing: border-box; font-family: monospace;"
+                                        />
+                                    </div>
+                                    <button 
+                                        onclick={ctx.link().callback(|_| Msg::AddRole)}
+                                        disabled={self.new_role_name.is_empty() || self.new_role_pubkey.len() != 64}
+                                        style={if self.new_role_name.is_empty() || self.new_role_pubkey.len() != 64 {
+                                            "background: #555; color: #888; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: not-allowed; white-space: nowrap;"
+                                        } else {
+                                            "background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; transition: background 0.3s ease;"
+                                        }}
+                                    >
+                                        { "Add Role Securely" }
+                                    </button>
+                                    <button 
+                                        onclick={
+                                            let role_name = self.new_role_name.clone();
+                                            ctx.link().callback(move |_| Msg::SendCommand(format!("{} {}", CMD_REVOKE_ROLE, role_name)))
+                                        }
+                                        disabled={self.new_role_name.is_empty()}
+                                        style={if self.new_role_name.is_empty() {
+                                            "background: #555; color: #888; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: not-allowed; white-space: nowrap;"
+                                        } else {
+                                            "background: #f44336; color: #fff; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; transition: background 0.3s ease;"
+                                        }}
+                                    >
+                                        { "Revoke Role" }
+                                    </button>
+                                </div>
+                                <div style="margin-top: 15px;">
+                                    <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_LIST_ROLES.to_string()))} style="background: #2196f3; padding: 8px 16px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                        { "List Roles" }
+                                    </button>
+                                </div>
+                            </div>
+                        }
+
                         <h3>{ "System Controls" }</h3>
                         <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
-                            <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_GREEN.to_string()))} style="background: #4caf50; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                { "System Normal (Green)" }
+                            <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_READ_SENSOR.to_string()))} style="background: #4caf50; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                { "Read Sensors (10s Green)" }
                             </button>
-                            <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_YELLOW.to_string()))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                { "Warning (Yellow)" }
-                            </button>
-                            <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_RED.to_string()))} style="background: #f44336; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                { "Critical Alarm (Red)" }
-                            </button>
-                            <button onclick={ctx.link().callback(|_| Msg::SendCommand("CLEAR alarm".to_string()))} style="background: #2196f3; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                { "Clear Alarm" }
-                            </button>
+                            
+                            if role == "Operator" || role == "Admin" || role == "Supervisor" {
+                                <button onclick={ctx.link().callback(|_| Msg::SendCommand(format!("{}20.0", CMD_SET_THRESHOLD)))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                    { "Set Threshold (20C) (10s Yellow)" }
+                                </button>
+                                <button onclick={ctx.link().callback(|_| Msg::SendCommand(format!("{}30.0", CMD_SET_THRESHOLD)))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                    { "Set Threshold (30C) (10s Yellow)" }
+                                </button>
+                            }
+                            
+                            if role == "Admin" || role == "Supervisor" {
+                                <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_CLEAR_ALARM.to_string()))} style="background: #2196f3; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                    { "Clear Alarm (10s Blue)" }
+                                </button>
+                                <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_RED.to_string()))} style="background: #f44336; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                    { "Test Red (10s)" }
+                                </button>
+                            }
                         </div>
                     }
                     
