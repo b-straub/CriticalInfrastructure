@@ -91,30 +91,112 @@ async fn main(spawner: Spawner) {
     let timg1 = TimerGroup::new(peripherals.TIMG1);
     let mut rng = Rng::new(peripherals.RNG);
     
-    let mut flash = FlashStorage::new();
-    let mut seed_buf = [0u8; 4096];
-    let mut esp_seed = [0u8; 32];
-    let mut has_seed = false;
-    
-    if flash.read(0x210000, &mut seed_buf).is_ok() {
-        let is_empty = seed_buf[0..32].iter().all(|&b| b == 0xFF || b == 0x00);
-        if !is_empty {
-            esp_seed.copy_from_slice(&seed_buf[0..32]);
-            has_seed = true;
+    // --- Device identity seeds (X25519 for the command envelope, Ed25519 for
+    //     signing responses). Two provisioning paths: ---
+
+    // PRODUCTION: derive both seeds from a read-protected eFuse key via the
+    // hardware HMAC-SHA256 peripheral. The key is read by the HMAC engine
+    // directly from eFuse and is NEVER exposed to software -- that is the entire
+    // point of read-protected eFuse. The S3 has no Curve25519 hardware, so the
+    // derived *seeds* live in RAM and feed software Ed25519/X25519; the root
+    // secret stays hardware-only. Burn a 256-bit HMAC_UP key into eFuse block 0.
+    #[cfg(feature = "efuse-hmac-identity")]
+    let (x25519_seed, ed25519_seed) = {
+        use esp_hal::hmac::{Hmac, HmacPurpose, KeyId};
+        info!("Deriving device identity from read-protected eFuse HMAC key (hardware-only root).");
+        // The HMAC core is driven by the SHA core; hold the SHA peripheral so
+        // its clock stays enabled for the duration of the derivation.
+        let _sha_clock = esp_hal::sha::Sha::new(peripherals.SHA);
+        let mut hmac = Hmac::new(peripherals.HMAC);
+        fn kdf(hmac: &mut Hmac, label: &[u8]) -> [u8; 32] {
+            hmac.init();
+            if hmac.configure(HmacPurpose::ToUser, KeyId::Key0).is_err() {
+                // No fallback: a production build with no provisioned eFuse key
+                // must fail loudly rather than silently derive a software key.
+                panic!("eFuse HMAC key (block 0, purpose HMAC_UP) not provisioned");
+            }
+            let mut rem: &[u8] = label;
+            while !rem.is_empty() {
+                if let Ok(r) = hmac.update(rem) {
+                    rem = r;
+                }
+            }
+            let mut out = [0u8; 32];
+            while hmac.finalize(&mut out).is_err() {}
+            out
         }
-    }
-    
-    if !has_seed {
-        for chunk in esp_seed.chunks_mut(4) {
-            let rand_val = rng.random();
-            chunk.copy_from_slice(&rand_val.to_le_bytes());
+        let x = kdf(&mut hmac, b"esp-x25519-identity-v1");
+        let e = kdf(&mut hmac, b"esp-ed25519-signing-v1");
+        (x, e)
+    };
+
+    // DEV/PROVISIONING (default): seed from flash, or generate + persist to
+    // PLAIN flash on first boot. This is the branch that is not production safe;
+    // it shouts about it so a plain-flash key never ships unnoticed.
+    #[cfg(not(feature = "efuse-hmac-identity"))]
+    let (x25519_seed, ed25519_seed) = {
+        let mut flash = FlashStorage::new();
+        let mut seed_buf = [0u8; 4096];
+        let mut esp_seed = [0u8; 32];
+        let mut has_seed = false;
+
+        if flash.read(0x210000, &mut seed_buf).is_ok() {
+            let is_empty = seed_buf[0..32].iter().all(|&b| b == 0xFF || b == 0x00);
+            if !is_empty {
+                esp_seed.copy_from_slice(&seed_buf[0..32]);
+                has_seed = true;
+            }
         }
-        let mut write_buf = [0u8; 4096];
-        write_buf[0..32].copy_from_slice(&esp_seed);
-        let _ = flash.write(0x210000, &write_buf);
+
+        if !has_seed {
+            for chunk in esp_seed.chunks_mut(4) {
+                let rand_val = rng.random();
+                chunk.copy_from_slice(&rand_val.to_le_bytes());
+            }
+            let mut write_buf = [0u8; 4096];
+            write_buf[0..32].copy_from_slice(&esp_seed);
+            let _ = flash.write(0x210000, &write_buf);
+
+            log::error!("");
+            log::error!("\x1b[1;97;41m ================================================================ \x1b[0m");
+            log::error!("\x1b[1;97;41m  !!  NOT PRODUCTION SAFE  --  STATIC KEY STORED IN PLAIN FLASH  !! \x1b[0m");
+            log::error!("\x1b[1;97;41m ================================================================ \x1b[0m");
+            log::error!("\x1b[1;91m  The long-term X25519 ROM secret was written UNENCRYPTED to flash\x1b[0m");
+            log::error!("\x1b[1;91m  at 0x210000. Anyone with physical access can read or replace it.\x1b[0m");
+            log::error!("\x1b[1;91m  Build with --features efuse-hmac-identity and burn an eFuse HMAC\x1b[0m");
+            log::error!("\x1b[1;91m  key for production (docs/formal/EFUSE-HARDENING.md).\x1b[0m");
+            log::error!("\x1b[1;97;41m ================================================================ \x1b[0m");
+            log::error!("");
+        }
+
+        // Domain-separate the Ed25519 signing seed from the X25519 seed.
+        let ed25519_seed = {
+            use sha2::Digest as _;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(esp_seed);
+            hasher.update(b"esp-ed25519-signing-v1");
+            let digest = hasher.finalize();
+            let mut s = [0u8; 32];
+            s.copy_from_slice(&digest);
+            s
+        };
+        (esp_seed, ed25519_seed)
+    };
+
+    let esp_x25519_secret = x25519_dalek::StaticSecret::from(x25519_seed);
+
+    // Ed25519 response-signing identity. Every response is signed with this key
+    // so the WebApp can prove it genuinely came from THIS device. Provision the
+    // printed public key into the WebApp "Sig Pubkey" field.
+    let esp_signing_key = ed25519_dalek::SigningKey::from_bytes(&ed25519_seed);
+    {
+        use core::fmt::Write as _;
+        let mut esp_sig_pub_hex = heapless::String::<64>::new();
+        for b in esp_signing_key.verifying_key().to_bytes() {
+            let _ = write!(&mut esp_sig_pub_hex, "{:02x}", b);
+        }
+        info!("ESP32 Ed25519 Response-Signing PubKey: {}", esp_sig_pub_hex);
     }
-    
-    let esp_x25519_secret = x25519_dalek::StaticSecret::from(esp_seed);
     let esp_x25519_pub = x25519_dalek::PublicKey::from(&esp_x25519_secret);
     
     let mut hex_x25519 = heapless::String::<64>::new();
@@ -146,14 +228,25 @@ async fn main(spawner: Spawner) {
         .with_sda(peripherals.GPIO8)
         .with_scl(peripherals.GPIO9);
     
-    let mut sender = I2cSender::new(&mut i2c, 0x27);
     let mut delay = esp_hal::delay::Delay::new();
-    
-    // Delay 500ms before initializing the LCD. During a warm flash (without power cycling),
-    // the HD44780 controller can be left in a weird state. Giving it time and allowing
-    // the driver to send a clean init sequence fixes "bogus" characters on reboot.
-    delay.delay_millis(500);
-    
+
+    // Robust LCD reset BEFORE the driver init. A warm flash resets the ESP but
+    // not the LCD, which can be left mid-command in 4-bit mode. The lcd1602
+    // driver assumes a cold 8-bit start and only switches to 4-bit once, so it
+    // desyncs and prints garbage after a flash. Per the HD44780 datasheet,
+    // strobe the 0x3 reset nibble three times on the PCF8574 backpack
+    // (P4-7 = data, P3 = backlight, P2 = Enable) to force the controller back to
+    // 8-bit; the driver's normal init then switches it to 4-bit cleanly.
+    delay.delay_millis(100);
+    for wait_us in [4500u32, 200, 200] {
+        let _ = i2c.write(0x27u8, &[0x3Cu8]); // nibble 0x3, backlight on, Enable high
+        delay.delay_micros(1);
+        let _ = i2c.write(0x27u8, &[0x38u8]); // Enable low -> latch
+        delay.delay_micros(wait_us);
+    }
+    delay.delay_millis(5);
+
+    let mut sender = I2cSender::new(&mut i2c, 0x27);
     let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
     
     // Set up GPIO21 for DHT11 data line
@@ -204,6 +297,17 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                 ROLES = saved_roles;
             }
             info!("Loaded roles from flash");
+        }
+    }
+
+    // Load the persisted alarm threshold (own sector; falls back to the
+    // compiled default if never written / flash erased).
+    let mut thr_buf = [0u8; 4096];
+    if flash.read(0x220000, &mut thr_buf).is_ok() {
+        let stored = f32::from_le_bytes([thr_buf[0], thr_buf[1], thr_buf[2], thr_buf[3]]);
+        if stored.is_finite() && stored > -50.0 && stored < 200.0 {
+            unsafe { THRESHOLD = stored; }
+            info!("Loaded threshold from flash: {:.1}C", stored);
         }
     }
 
@@ -417,6 +521,9 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                     
                     let mut response_msg = "Invalid Crypto Envelope";
                     let mut dynamic_msg = heapless::String::<512>::new();
+                    // Timestamp of the incoming command, echoed and signed into the
+                    // response so the WebApp can bind the response to its request.
+                    let mut resp_ts = heapless::String::<24>::new();
                     
                     if valid_crypto {
                         #[allow(deprecated)]
@@ -447,6 +554,7 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                                 if let Ok(plaintext) = core::str::from_utf8(msg) {
                                     let mut inner_parts = plaintext.split(';');
                                     let timestamp_str = inner_parts.next().unwrap_or("");
+                                    { use core::fmt::Write as _; let _ = write!(&mut resp_ts, "{}", timestamp_str); }
                                     let cmd = inner_parts.next().unwrap_or("");
                                     let sig_hex = inner_parts.next().unwrap_or("");
                                     
@@ -640,6 +748,13 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                                                                         THRESHOLD = val; 
                                                                         ALARM_ACTIVE = false;
                                                                     }
+                                                                    // Persist so the threshold survives reboot (like keys and roles).
+                                                                    {
+                                                                        let mut thr_buf = [0u8; 4096];
+                                                                        thr_buf[0..4].copy_from_slice(&val.to_le_bytes());
+                                                                        let mut thr_flash = FlashStorage::new();
+                                                                        let _ = thr_flash.write(0x220000, &thr_buf);
+                                                                    }
                                                                     let _ = write!(&mut dynamic_msg, "Threshold set to {:.1}C", val);
                                                                     allowed = true; 
                                                                     color_name = "Yellow";
@@ -728,56 +843,69 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                         }
                     }
                     
-                    // Encrypt response (Authentication is provided by AES-GCM tag)
-                    let mut final_response = heapless::String::<1024>::new();
-                    let mut plaintext = heapless::String::<512>::new();
+                    // Build, SIGN, then encrypt the response. The Ed25519 signature
+                    // (verified by the WebApp against the ESP's provisioned pubkey) is
+                    // what makes the response unforgeable; the AES-GCM tag alone only
+                    // proves knowledge of a key an active MITM can also derive.
+                    let mut final_response = heapless::String::<2560>::new();
                     use core::fmt::Write;
+
+                    let mut resp_message = heapless::String::<512>::new();
                     if !dynamic_msg.is_empty() {
-                        let _ = write!(&mut plaintext, "{}", dynamic_msg);
+                        let _ = write!(&mut resp_message, "{}", dynamic_msg);
                     } else {
-                        let _ = write!(&mut plaintext, "{}", response_msg);
+                        let _ = write!(&mut resp_message, "{}", response_msg);
                     }
+
+                    // Sign "resp|<ts>|<message>": binds the response to this request
+                    // and proves it originated from this device's signing key.
+                    let mut resp_signed = heapless::String::<560>::new();
+                    let _ = write!(&mut resp_signed, "resp|{}|{}", resp_ts, resp_message);
+                    use ed25519_dalek::Signer as _;
+                    let resp_signature = esp_signing_key.sign(resp_signed.as_bytes());
+                    let mut resp_sig_hex = heapless::String::<128>::new();
+                    for b in resp_signature.to_bytes() {
+                        let _ = write!(&mut resp_sig_hex, "{:02x}", b);
+                    }
+
+                    // Inner plaintext that gets AES-GCM encrypted below: ts;message;sig
+                    let mut plaintext = heapless::String::<768>::new();
+                    let _ = write!(&mut plaintext, "{};{};{}", resp_ts, resp_message, resp_sig_hex);
                     
                     #[allow(deprecated)]
                     use aes_gcm::{Aes256Gcm, Key, Nonce};
                     #[allow(deprecated)]
                     use aes_gcm::aead::{AeadInPlace, KeyInit};
                     
-                    // ESP32 generates ephemeral X25519 for the response
-                    let ticks = embassy_time::Instant::now().as_ticks();
+                    // ESP32 generates a fresh ephemeral X25519 keypair for the response.
+                    // The seed MUST come from the hardware TRNG. Deriving it from a timer
+                    // makes the private key low-entropy and reconstructable from the public
+                    // IV, and reusing a timer value across two responses reuses the AES-GCM
+                    // (key, nonce) pair. The RNG peripheral is a true RNG here because the
+                    // Wi-Fi radio is enabled.
                     let mut resp_ephemeral_seed = [0u8; 32];
-                    for i in 0..8 {
-                        resp_ephemeral_seed[i] = ((ticks >> (i * 8)) & 0xFF) as u8;
-                        resp_ephemeral_seed[i+8] = ((ticks >> (i * 8)) & 0xFF) as u8 ^ 0xAA;
-                    }
+                    rng.read(&mut resp_ephemeral_seed);
                     let resp_ephemeral_secret = x25519_dalek::StaticSecret::from(resp_ephemeral_seed);
                     let resp_ephemeral_pub = x25519_dalek::PublicKey::from(&resp_ephemeral_secret);
-                    
-                    // The WebApp must have sent an ephemeral pubkey that we used earlier.
-                    // Wait, the WebApp's ephemeral pubkey was used for the request.
-                    // We can just use the exact same shared secret we just computed, 
-                    // OR we compute a new one using the WebApp's ephemeral pubkey.
-                    // Actually, if we use the WebApp's ephemeral pubkey, we just re-use the `shared_secret`.
-                    // But wait, `shared_secret` is out of scope here.
-                    // Let's just recompute it, or rely on the `ephemeral_pub` we parsed!
-                    
+
+                    // DH against the client's request ephemeral pubkey yields a fresh
+                    // per-response shared secret.
                     let ephemeral_pub = x25519_dalek::PublicKey::from(ephemeral_pub_bytes);
                     let resp_shared_secret = resp_ephemeral_secret.diffie_hellman(&ephemeral_pub);
                     use sha2::Digest;
                     let tx_key_hash = sha2::Sha256::digest(resp_shared_secret.as_bytes());
-                    
+
                     #[allow(deprecated)]
                     let key = Key::<Aes256Gcm>::from_slice(&tx_key_hash);
                     let cipher = Aes256Gcm::new(key);
-                    
+
+                    // Fresh random 96-bit GCM nonce from the TRNG.
                     let mut iv = [0u8; 12];
-                    for i in 0..8 {
-                        iv[i] = ((ticks >> (i * 8)) & 0xFF) as u8;
-                    }
+                    rng.read(&mut iv);
                     #[allow(deprecated)]
                     let nonce = Nonce::from_slice(&iv);
                     
-                    let mut ciphertext = heapless::Vec::<u8, 256>::new();
+                    let mut ciphertext = heapless::Vec::<u8, 1024>::new();
                     let _ = ciphertext.extend_from_slice(plaintext.as_bytes());
                     
                     #[allow(deprecated)]
@@ -789,7 +917,7 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                             let _ = write!(&mut iv_hex_out, "{:02x}", b);
                         }
                         
-                        let mut cipher_hex_out = heapless::String::<512>::new();
+                        let mut cipher_hex_out = heapless::String::<2048>::new();
                         for b in ciphertext.as_slice() {
                             let _ = write!(&mut cipher_hex_out, "{:02x}", b);
                         }
