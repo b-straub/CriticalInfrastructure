@@ -257,26 +257,37 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
             dht_pin.set_output_enable(false);
             dht_pin.set_input_enable(true);
             
-            let mut t = 0;
-            while dht_pin.is_high() && t < 100 { dht_delay.delay_micros(1); t += 1; }
-            t = 0;
-            while dht_pin.is_low() && t < 100 { dht_delay.delay_micros(1); t += 1; }
-            t = 0;
-            while dht_pin.is_high() && t < 100 { dht_delay.delay_micros(1); t += 1; }
+            let mut success = true;
+            
+            macro_rules! wait_pulse {
+                ($state:expr) => {{
+                    let start = embassy_time::Instant::now();
+                    let mut res = None;
+                    while start.elapsed().as_micros() < 200 {
+                        if dht_pin.is_high() != $state {
+                            res = Some(start.elapsed().as_micros());
+                            break;
+                        }
+                    }
+                    res
+                }};
+            }
+
+            if wait_pulse!(true).is_none() { success = false; }
+            if wait_pulse!(false).is_none() { success = false; }
+            if wait_pulse!(true).is_none() { success = false; }
             
             let mut data = [0u8; 5];
-            let mut success = true;
-            for i in 0..40 {
-                t = 0;
-                while dht_pin.is_low() && t < 100 { dht_delay.delay_micros(1); t += 1; }
-                if t >= 100 { success = false; break; }
-                
-                t = 0;
-                while dht_pin.is_high() && t < 100 { dht_delay.delay_micros(1); t += 1; }
-                if t >= 100 { success = false; break; }
-                
-                if t > 40 {
-                    data[i / 8] |= 1 << (7 - (i % 8));
+            if success {
+                for i in 0..40 {
+                    if wait_pulse!(false).is_none() { success = false; break; }
+                    if let Some(len) = wait_pulse!(true) {
+                        if len > 40 {
+                            data[i / 8] |= 1 << (7 - (i % 8));
+                        }
+                    } else {
+                        success = false; break;
+                    }
                 }
             }
             
