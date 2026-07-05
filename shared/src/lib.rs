@@ -42,4 +42,7 @@ pub mod terminology {
     pub const CMD_SET_THRESHOLD: &str = "SET_THRESHOLD ";
     pub const CMD_CLEAR_ALARM: &str = "CLEAR_ALARM";
     pub const CMD_WHOAMI: &str = "WHOAMI";
+    
+    // Timeouts
+    pub const COMMAND_LED_TIMEOUT_MS: u64 = 5000;
 }

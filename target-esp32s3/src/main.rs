@@ -235,6 +235,8 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
         Timer::after(Duration::from_millis(500)).await;
     }
     
+    let mut last_dht_read = 0;
+    
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
@@ -242,7 +244,7 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
         info!("Listening on TCP:8080...");
         
         let connected = loop {
-            match embassy_time::with_timeout(embassy_time::Duration::from_secs(3), socket.accept(8080)).await {
+            match embassy_time::with_timeout(embassy_time::Duration::from_millis(250), socket.accept(8080)).await {
                 Ok(Err(e)) => {
                     info!("Accept error: {:?}", e);
                     break false;
@@ -251,8 +253,11 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                     break true;
                 }
                 Err(_) => {
-                    // Socket timeout - Idle mode
-                    // Read DHT11 and update display!
+                    // Socket timeout - Idle mode (runs every 250ms)
+                    let now_ms = embassy_time::Instant::now().as_millis();
+                    if now_ms - last_dht_read > 2000 {
+                        last_dht_read = now_ms;
+                        // Read DHT11 and update display!
             let mut temp = 24.5;
             let mut hum = 45.0;
             
@@ -327,13 +332,15 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
             }
             lcd.write_str_to_cur(&status_str);
 
+            } // End of 2-second DHT11 read block
+
             unsafe {
                 let now = embassy_time::Instant::now().as_millis();
                 if now < COMMAND_OVERRIDE_UNTIL {
                     let color_copy = COMMAND_OVERRIDE_COLOR;
                     ws2812.write(color_copy.iter().cloned()).unwrap();
                 } else if ALARM_ACTIVE {
-                    if (now / 500) % 2 == 0 {
+                    if (now / 250) % 2 == 0 {
                         ws2812.write([colors::RED; 8].iter().cloned()).unwrap();
                     } else {
                         ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
@@ -617,13 +624,22 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                                                         if role == ROLE_OBSERVER || role == ROLE_OPERATOR || role == ROLE_ADMIN || role == ROLE_SUPERVISOR { 
                                                             allowed = true; 
                                                             color_name = "Green";
-                                                            let _ = write!(&mut dynamic_msg, "Temp: {:.1}C, RH: {:.1}%", unsafe { LAST_TEMP }, unsafe { LAST_RH });
+                                                            if unsafe { ALARM_ACTIVE } {
+                                                                let _ = write!(&mut dynamic_msg, "Temp: {:.1}C, RH: {:.1}% (ALARM!)", unsafe { LAST_TEMP }, unsafe { LAST_RH });
+                                                            } else {
+                                                                let _ = write!(&mut dynamic_msg, "Temp: {:.1}C, RH: {:.1}%", unsafe { LAST_TEMP }, unsafe { LAST_RH });
+                                                            }
                                                         }
                                                     } else if cmd.starts_with(CMD_SET_THRESHOLD) {
                                                         if role == ROLE_OPERATOR || role == ROLE_ADMIN || role == ROLE_SUPERVISOR { 
-                                                            if let Some(val_str) = parts.next() {
+                                                            let mut cmd_parts = cmd.split_whitespace();
+                                                            cmd_parts.next();
+                                                            if let Some(val_str) = cmd_parts.next() {
                                                                 if let Ok(val) = val_str.parse::<f32>() {
-                                                                    unsafe { THRESHOLD = val; }
+                                                                    unsafe { 
+                                                                        THRESHOLD = val; 
+                                                                        ALARM_ACTIVE = false;
+                                                                    }
                                                                     let _ = write!(&mut dynamic_msg, "Threshold set to {:.1}C", val);
                                                                     allowed = true; 
                                                                     color_name = "Yellow";
@@ -648,7 +664,11 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                                                             if role == ROLE_OPERATOR || role == ROLE_ADMIN { allowed = true; }
                                                             color_name = "Yellow";
                                                         } else if cmd.starts_with(CMD_COLOR_RED) {
-                                                            if role == ROLE_ADMIN { allowed = true; }
+                                                            if role == ROLE_ADMIN { 
+                                                                allowed = true;
+                                                                unsafe { ALARM_ACTIVE = true; }
+                                                                let _ = write!(&mut dynamic_msg, "Alarm Test Triggered");
+                                                            }
                                                             color_name = "Red";
                                                     }
                                                     
@@ -679,7 +699,7 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                                                         
                                                         unsafe {
                                                             COMMAND_OVERRIDE_COLOR = data;
-                                                            COMMAND_OVERRIDE_UNTIL = embassy_time::Instant::now().as_millis() + 10_000;
+                                                            COMMAND_OVERRIDE_UNTIL = embassy_time::Instant::now().as_millis() + shared::terminology::COMMAND_LED_TIMEOUT_MS;
                                                         }
                                                     } else {
                                                         if response_msg == "Invalid Crypto Envelope" {
@@ -785,6 +805,9 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                     }
                     
                     let _ = socket.write(final_response.as_bytes()).await;
+                    let _ = socket.flush().await;
+                    socket.close();
+                    break;
                 }
                 Err(e) => {
                     info!("Read error: {:?}", e);
