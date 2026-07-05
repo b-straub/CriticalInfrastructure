@@ -227,10 +227,19 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
         
         info!("Listening on TCP:8080...");
-        if let Err(e) = socket.accept(8080).await {
-            info!("Accept error: {:?}", e);
-            // Socket timeout - Idle mode
-            // Read DHT11 and update display!
+        
+        let connected = loop {
+            match embassy_time::with_timeout(embassy_time::Duration::from_secs(3), socket.accept(8080)).await {
+                Ok(Err(e)) => {
+                    info!("Accept error: {:?}", e);
+                    break false;
+                }
+                Ok(Ok(())) => {
+                    break true;
+                }
+                Err(_) => {
+                    // Socket timeout - Idle mode
+                    // Read DHT11 and update display!
             let mut temp = 24.5;
             let mut hum = 45.0;
             
@@ -279,7 +288,11 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
             use core::fmt::Write;
             let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
             lcd.write_str_to_cur(&status_str);
+                }
+            }
+        };
 
+        if !connected {
             continue;
         }
         
