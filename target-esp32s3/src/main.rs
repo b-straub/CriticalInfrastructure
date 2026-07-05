@@ -465,7 +465,8 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                     if allowed {
                                                         unsafe { LAST_TIMESTAMP = incoming_ts; }
                                                         if response_msg == "Invalid Crypto Envelope" {
-                                                            response_msg = "Command Executed";
+                                                            // Provide a useful telemetry back loop from the (mocked) DHT11 environmental sensor
+                                                            response_msg = "Command Executed. DHT11: 24.5C / 45.0% RH";
                                                         }
                                                         let _ = write!(&mut status_str, "{:<6} Pass   ", color_name);
                                                         lcd.write_str_to_cur(&status_str);
