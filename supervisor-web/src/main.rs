@@ -29,6 +29,7 @@ enum Msg {
     SendCommand(String),
     UpdateNewRoleName(String),
     UpdateNewRolePubkey(String),
+    UpdateSupervisorPubkey(String),
     AddRole,
 }
 
@@ -40,6 +41,7 @@ struct App {
     pubkey_hex: Option<String>,
     esp32_ip: String,
     esp32_pubkey: String,
+    supervisor_pubkey: String,
     new_role_name: String,
     new_role_pubkey: String,
 }
@@ -52,6 +54,7 @@ impl Component for App {
         let user_id = LocalStorage::get::<String>("user_id").unwrap_or_else(|_| "supervisor@prfmail.de".to_string());
         let esp32_ip = LocalStorage::get::<String>("esp32_ip").unwrap_or_else(|_| "192.168.178.132".to_string());
         let esp32_pubkey = LocalStorage::get::<String>("esp32_pubkey").unwrap_or_else(|_| "b755ced64d4a27ce32afcf199f18a3ed1f31897028b0ff6e55191ea449db2644".to_string());
+        let supervisor_pubkey = LocalStorage::get::<String>("supervisor_pubkey").unwrap_or_else(|_| "ccdef32d7cde52d7bf6c7dbde887dc9d25414e9ff57bb5aee5d5da65e5f6e439".to_string());
         
         Self {
             user_id,
@@ -61,6 +64,7 @@ impl Component for App {
             pubkey_hex: None,
             esp32_ip,
             esp32_pubkey,
+            supervisor_pubkey,
             new_role_name: String::new(),
             new_role_pubkey: String::new(),
         }
@@ -141,9 +145,14 @@ impl Component for App {
                 self.new_role_pubkey = pk;
                 true
             }
+            Msg::UpdateSupervisorPubkey(pk) => {
+                self.supervisor_pubkey = pk.clone();
+                let _ = LocalStorage::set("supervisor_pubkey", pk);
+                true
+            }
             Msg::AddRole => {
                 if let Some(seed) = &self.seed {
-                    if self.active_role.as_deref() == Some(ROLE_SUPERVISOR) {
+                    if self.pubkey_hex.as_deref() == Some(&self.supervisor_pubkey) {
                         let signing_key = ed25519_dalek::SigningKey::from_bytes(seed.as_slice().try_into().unwrap());
                         let cert_msg = format!("ROLE:{};PUBKEY:{}", self.new_role_name, self.new_role_pubkey);
                         use ed25519_dalek::Signer;
@@ -329,7 +338,45 @@ impl Component for App {
                         </div>
                     </div>
                     
-                    if self.active_role.as_deref() == Some(ROLE_SUPERVISOR) {
+                    <div style="margin-top: 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                        <div style="display: flex; flex-direction: column;">
+                            <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "ESP32 IP Address:" }</label>
+                            <input type="text"
+                                value={self.esp32_ip.clone()}
+                                oninput={ctx.link().callback(|e: InputEvent| {
+                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                    Msg::UpdateIp(input.value())
+                                })}
+                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; max-width: 300px; box-sizing: border-box; font-size: 16px;"
+                            />
+                        </div>
+                        <div style="display: flex; flex-direction: column; width: 100%; max-width: 650px;">
+                            <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "ESP32 ROM Pubkey:" }</label>
+                            <input type="text"
+                                value={self.esp32_pubkey.clone()}
+                                oninput={ctx.link().callback(|e: InputEvent| {
+                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                    Msg::UpdateEspPubkey(input.value())
+                                })}
+                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
+                            />
+                        </div>
+                        <div style="display: flex; flex-direction: column; width: 100%; max-width: 650px;">
+                            <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "Supervisor Pubkey:" }</label>
+                            <input type="text"
+                                value={self.supervisor_pubkey.clone()}
+                                oninput={ctx.link().callback(|e: InputEvent| {
+                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                    Msg::UpdateSupervisorPubkey(input.value())
+                                })}
+                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
+                            />
+                        </div>
+                    </div>
+                    
+                    <hr style="border-color: #333; margin: 30px 0;" />
+                    
+                    if self.pubkey_hex.as_deref() == Some(&self.supervisor_pubkey) {
                         <div style="background: #1e1e1e; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #444;">
                             <h3 style="margin-top: 0; color: #ffa000;">{ "Supervisor CA Tools" }</h3>
                             <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32. The certificate signature proves you authorized this Role & PubKey pairing." }</p>
@@ -363,50 +410,25 @@ impl Component for App {
                                 </button>
                             </div>
                         </div>
+                    } else {
+                        <h3>{ "System Controls" }</h3>
+                        <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_GREEN.to_string()))} style="background: #4caf50; margin-right: 10px;">
+                            { "System Normal (Green)" }
+                        </button>
+                        <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_YELLOW.to_string()))} style="background: #ff9800; margin-right: 10px;">
+                            { "Warning (Yellow)" }
+                        </button>
+                        <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_RED.to_string()))} style="background: #f44336; margin-right: 10px;">
+                            { "Critical Alarm (Red)" }
+                        </button>
+                        <button onclick={ctx.link().callback(|_| Msg::SendCommand("CLEAR alarm".to_string()))} style="background: #2196f3;">
+                            { "Clear Alarm" }
+                        </button>
                     }
-
-                    <div style="margin-top: 20px; display: flex; gap: 20px; align-items: center;">
-                        <div style="display: flex; flex-direction: column;">
-                            <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "ESP32 IP Address:" }</label>
-                            <input type="text"
-                                value={self.esp32_ip.clone()}
-                                oninput={ctx.link().callback(|e: InputEvent| {
-                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                    Msg::UpdateIp(input.value())
-                                })}
-                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; max-width: 300px; box-sizing: border-box; font-size: 16px;"
-                            />
-                        </div>
-                        <div style="display: flex; flex-direction: column; width: 100%; max-width: 650px;">
-                            <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "ESP32 ROM Pubkey:" }</label>
-                            <input type="text"
-                                value={self.esp32_pubkey.clone()}
-                                oninput={ctx.link().callback(|e: InputEvent| {
-                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                    Msg::UpdateEspPubkey(input.value())
-                                })}
-                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
-                            />
-                        </div>
-                    </div>
                     
-                    <h3>{ "System Controls" }</h3>
-                    <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_GREEN.to_string()))} style="background: #4caf50; margin-right: 10px;">
-                        { "System Normal (Green)" }
-                    </button>
-                    <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_YELLOW.to_string()))} style="background: #ff9800; margin-right: 10px;">
-                        { "Warning (Yellow)" }
-                    </button>
-                    <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_RED.to_string()))} style="background: #f44336; margin-right: 10px;">
-                        { "Critical Alarm (Red)" }
-                    </button>
-                    <button onclick={ctx.link().callback(|_| Msg::SendCommand("CLEAR alarm".to_string()))} style="background: #2196f3;">
-                        { "Clear Active Alarm" }
-                    </button>
-                }
-
-                if let Some(err) = &self.error {
-                    <div class="error">{ err }</div>
+                    if let Some(err) = &self.error {
+                        <div class="error">{ err }</div>
+                    }
                 }
             </div>
         }
