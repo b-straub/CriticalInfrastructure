@@ -1,26 +1,38 @@
 theory DashboardProtocol
 begin
 
-builtins: diffie-hellman, symmetric-encryption, hashing, signing
+builtins: diffie-hellman, symmetric-encryption, hashing, signing, natural-numbers
 
-// The protocol uses ephemeral X25519 for envelope encryption, and Ed25519 for command authentication.
+/*
+  Command timestamps are public naturals supplied via In(): the attacker knows
+  and may choose them, so replay protection rests on the ESP's monotonic clock,
+  not on timestamp secrecy.
 
-rule Init_ESP32_ROM:
-    [ Fr(~rom_priv) ]
-    --[ Secret_ROM(~rom_priv) ]->
-    [ 
-        !ESP32_ROM_Priv(~rom_priv), 
-        !ESP32_ROM_Pub('g'^~rom_priv), 
-        Out('g'^~rom_priv)
+  Response authenticity is provided by an ESP SIGNATURE (Ed25519) over the
+  response, verified by the WebApp with the ESP's public signing key. Response
+  confidentiality uses an ephemeral x ephemeral DH key => perfect forward
+  secrecy (neither long-term key derives a past response key).
+*/
+
+rule Init_ESP32:
+    [ Fr(~rom_priv), Fr(~esp_sig) ]
+    --[ Secret_ROM(~rom_priv), Secret_ESPSig(~esp_sig), OnlyOnceESP() ]->
+    [
+        !ESP32_ROM_Priv(~rom_priv),
+        !ESP32_ROM_Pub('g'^~rom_priv),
+        !ESP32_Sig_Priv(~esp_sig),
+        !ESP32_Sig_Pub(pk(~esp_sig)),
+        ESP32_Clock(~rom_priv, %1),
+        Out('g'^~rom_priv), Out(pk(~esp_sig))
     ]
 
 rule Init_WebApp_Role:
     [ Fr(~role_priv) ]
     --[ Secret_Role(~role_priv) ]->
-    [ 
-        !WebApp_Role_Priv(~role_priv), 
-        !WebApp_Role_Pub(pk(~role_priv)), 
-        Out(pk(~role_priv)) 
+    [
+        !WebApp_Role_Priv(~role_priv),
+        !WebApp_Role_Pub(pk(~role_priv)),
+        Out(pk(~role_priv))
     ]
 
 rule Provision_ESP32:
@@ -30,67 +42,76 @@ rule Provision_ESP32:
 
 rule WebApp_Send_Command:
     let
-        payload = <'command', ~timestamp>
+        payload = <'command', ts>
         sig = sign(payload, ~role_priv)
-        
+
         eph_pub = 'g'^~eph_priv
         aes_key = h(esp32_rom_pub^~eph_priv)
         ciphertext = senc(<payload, sig>, aes_key)
     in
-    [ 
+    [
         !WebApp_Role_Priv(~role_priv),
         !ESP32_ROM_Pub(esp32_rom_pub),
-        Fr(~timestamp),
+        !ESP32_Sig_Pub(esp_sig_pub),
+        In(ts),
         Fr(~eph_priv)
     ]
-    --[ 
+    --[
         Send_Command(payload),
         OutCipher(<payload, sig>, aes_key)
     ]->
-    [ 
+    [
         Out(<eph_pub, ciphertext>),
-        State_WebApp_Wait(~eph_priv, ~timestamp)
+        State_WebApp_Wait(~eph_priv, ts, esp_sig_pub)
     ]
 
 rule ESP32_Recv_Command:
     let
         aes_key = h(eph_pub^~rom_priv)
-        
+        payload = <'command', ts>
+
         resp_eph_pub = 'g'^~resp_eph_priv
-        resp_aes_key = h(eph_pub^~resp_eph_priv)
-        resp_payload = <'response_to', payload>
-        resp_ciphertext = senc(resp_payload, resp_aes_key)
+        resp_aes_key = h(eph_pub^~resp_eph_priv)     // ephemeral x ephemeral => PFS
+        resp_payload = <'response', ts>
+        resp_sig = sign(resp_payload, ~esp_sig)       // ESP seals the response
+        resp_ciphertext = senc(<resp_payload, resp_sig>, resp_aes_key)
     in
-    [ 
+    [
         !ESP32_ROM_Priv(~rom_priv),
+        !ESP32_Sig_Priv(~esp_sig),
         !ESP32_Has_Role_Pub(role_pub),
+        ESP32_Clock(~rom_priv, last),
         In(<eph_pub, senc(<payload, sig>, aes_key)>),
         Fr(~resp_eph_priv)
     ]
-    --[ 
+    --[
         InCipher(<payload, sig>, aes_key),
-        OutCipher(resp_payload, resp_aes_key),
+        OutCipher(<resp_payload, resp_sig>, resp_aes_key),
         Eq(verify(sig, payload, role_pub), true),
-        Execute_Command(payload),
-        Unique_Execution(payload)
+        Accept(~rom_priv, last, ts),
+        ClockVal(~rom_priv, ts),
+        Executed(~rom_priv, ts),
+        Execute_Command(payload)
     ]->
-    [ 
+    [
+        ESP32_Clock(~rom_priv, ts),
         Out(<resp_eph_pub, resp_ciphertext>)
     ]
 
 rule WebApp_Recv_Response:
     let
         resp_aes_key = h(resp_eph_pub^~eph_priv)
-        resp_payload = <'response_to', <'command', ~timestamp>>
-        resp_ciphertext = senc(resp_payload, resp_aes_key)
+        resp_payload = <'response', ts>
+        resp_ciphertext = senc(<resp_payload, resp_sig>, resp_aes_key)
     in
-    [ 
-        State_WebApp_Wait(~eph_priv, ~timestamp),
+    [
+        State_WebApp_Wait(~eph_priv, ts, esp_sig_pub),
         In(<resp_eph_pub, resp_ciphertext>)
     ]
-    --[ 
-        InCipher(resp_payload, resp_aes_key),
-        Recv_Response(resp_payload) 
+    --[
+        InCipher(<resp_payload, resp_sig>, resp_aes_key),
+        Eq(verify(resp_sig, resp_payload, esp_sig_pub), true),
+        Recv_Response(resp_payload)
     ]->
     []
 
@@ -100,27 +121,54 @@ rule WebApp_Recv_Response:
 restriction Equality:
     "All x y #i. Eq(x,y) @i ==> x = y"
 
-restriction Replay_Protection:
-    "All x #i #j. Unique_Execution(x) @i & Unique_Execution(x) @j ==> #i = #j"
+restriction OnlyOneESP:
+    "All #i #j. OnlyOnceESP() @i & OnlyOnceESP() @j ==> #i = #j"
+
+// Firmware guard: accept only if timestamp strictly exceeds the last accepted.
+restriction Monotonic_Timestamp:
+    "All rom last ts #i. Accept(rom, last, ts) @i ==> last ⊏ ts"
 
 
 // --- LEMMAS ---
 
 lemma cipher_sources [sources]:
-    "All m aes_key #t. InCipher(m, aes_key) @ #t ==> 
-        (Ex #t2. OutCipher(m, aes_key) @ #t2 & #t2 < #t) 
+    "All m aes_key #t. InCipher(m, aes_key) @ #t ==>
+        (Ex #t2. OutCipher(m, aes_key) @ #t2 & #t2 < #t)
       | (Ex #t2. KU(m) @ #t2 & #t2 < #t)"
 
+lemma clock_monotonic [use_induction, reuse]:
+    "All rom c1 c2 #i #j. ClockVal(rom, c1)@i & ClockVal(rom, c2)@j & #i < #j
+        ==> c1 ⊏ c2"
+
+// Replay protection, proven (not assumed).
+lemma no_replay [reuse]:
+    "All rom ts #i #j. Executed(rom, ts)@i & Executed(rom, ts)@j ==> #i = #j"
+
 lemma command_authentication:
-    "All payload #j. Execute_Command(payload) @j 
+    "All payload #j. Execute_Command(payload) @j
      ==> (Ex #i. Send_Command(payload) @i & i < j)"
+
+lemma rom_key_secrecy:
+    "All k #i. Secret_ROM(k) @i ==> not (Ex #j. K(k) @j)"
+
+lemma role_key_secrecy:
+    "All k #i. Secret_Role(k) @i ==> not (Ex #j. K(k) @j)"
+
+lemma esp_sig_key_secrecy:
+    "All k #i. Secret_ESPSig(k) @i ==> not (Ex #j. K(k) @j)"
+
+// The WebApp accepts a response only if the ESP actually produced it: the
+// response carries the ESP's signature, unforgeable without the ESP signing key.
+lemma response_authentication:
+    "All ts #k. Recv_Response(<'response', ts>) @k
+     ==> (Ex #j. Execute_Command(<'command', ts>) @j & #j < #k)"
 
 lemma executability:
     exists-trace
-    "Ex payload #i #j #k.
-        Send_Command(payload) @i &
-        Execute_Command(payload) @j &
-        Recv_Response(<'response_to', payload>) @k &
+    "Ex ts #i #j #k.
+        Send_Command(<'command', ts>) @i &
+        Execute_Command(<'command', ts>) @j &
+        Recv_Response(<'response', ts>) @k &
         i < j & j < k"
 
 end
