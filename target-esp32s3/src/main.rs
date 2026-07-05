@@ -632,9 +632,10 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                     
                     let ephemeral_pub = x25519_dalek::PublicKey::from(ephemeral_pub_bytes);
                     let resp_shared_secret = resp_ephemeral_secret.diffie_hellman(&ephemeral_pub);
+                    let tx_key_hash = sha2::Sha256::digest(resp_shared_secret.as_bytes());
                     
                     #[allow(deprecated)]
-                    let key = Key::<Aes256Gcm>::from_slice(resp_shared_secret.as_bytes());
+                    let key = Key::<Aes256Gcm>::from_slice(&tx_key_hash);
                     let cipher = Aes256Gcm::new(key);
                     
                     let mut iv = [0u8; 12];

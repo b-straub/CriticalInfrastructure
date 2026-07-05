@@ -31,6 +31,7 @@ enum Msg {
     UpdateNewRolePubkey(String),
     UpdateSupervisorPubkey(String),
     AddRole,
+    Logout,
 }
 
 struct App {
@@ -137,7 +138,14 @@ impl Component for App {
                 self.error = Some(err);
                 true
             }
-                        Msg::UpdateNewRoleName(name) => {
+            Msg::Logout => {
+                self.seed = None;
+                self.pubkey_hex = None;
+                self.active_role = None;
+                self.error = None;
+                true
+            }
+            Msg::UpdateNewRoleName(name) => {
                 self.new_role_name = name;
                 true
             }
@@ -331,11 +339,16 @@ impl Component for App {
                         { "Register New Passkey" }
                     </button>
                 } else {
-                    <div style="background: #2e7d32; padding: 10px; border-radius: 6px; margin-bottom: 20px;">
-                        <strong>{ format!("Authenticated as {}", self.active_role.as_ref().unwrap()) }</strong>
-                        <div style="font-size: 0.8em; margin-top: 5px;">
-                            { "Public Key: " }{ self.pubkey_hex.as_ref().unwrap() }
+                    <div style="background: #2e7d32; padding: 10px 15px; border-radius: 6px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <strong style="font-size: 1.1em;">{ format!("Authenticated as {}", self.active_role.as_ref().unwrap()) }</strong>
+                            <div style="font-size: 0.85em; margin-top: 5px; opacity: 0.9; font-family: monospace;">
+                                { "Public Key: " }{ self.pubkey_hex.as_ref().unwrap() }
+                            </div>
                         </div>
+                        <button onclick={ctx.link().callback(|_| Msg::Logout)} style="background: #d32f2f; color: white; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                            { "Logout" }
+                        </button>
                     </div>
                     
                     <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 15px; max-width: 800px;">
@@ -380,8 +393,8 @@ impl Component for App {
                         <div style="background: #1e1e1e; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #444;">
                             <h3 style="margin-top: 0; color: #ffa000;">{ "Supervisor CA Tools" }</h3>
                             <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32. The certificate signature proves you authorized this Role & PubKey pairing." }</p>
-                            <div style="display: flex; gap: 10px; align-items: flex-end;">
-                                <div style="display: flex; flex-direction: column;">
+                            <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                                <div style="display: flex; flex-direction: column; min-width: 150px;">
                                     <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "New Role Name:" }</label>
                                     <select
                                         value={self.new_role_name.clone()}
@@ -389,7 +402,7 @@ impl Component for App {
                                             let select = e.target_unchecked_into::<web_sys::HtmlSelectElement>();
                                             Msg::UpdateNewRoleName(select.value())
                                         })}
-                                        style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 160px; height: 35px;"
+                                        style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 100%; height: 35px;"
                                     >
                                         <option value="" disabled=true selected={self.new_role_name.is_empty()}>{ "Select Role..." }</option>
                                         <option value={ROLE_ADMIN} selected={self.new_role_name == ROLE_ADMIN}>{ ROLE_ADMIN }</option>
@@ -397,7 +410,7 @@ impl Component for App {
                                         <option value={ROLE_OBSERVER} selected={self.new_role_name == ROLE_OBSERVER}>{ ROLE_OBSERVER }</option>
                                     </select>
                                 </div>
-                                <div style="display: flex; flex-direction: column; flex-grow: 1;">
+                                <div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 300px;">
                                     <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "New Role Ed25519 PubKey:" }</label>
                                     <input type="text"
                                         value={self.new_role_pubkey.clone()}
@@ -409,7 +422,7 @@ impl Component for App {
                                         style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 100%; height: 35px; box-sizing: border-box; font-family: monospace;"
                                     />
                                 </div>
-                                <button onclick={ctx.link().callback(|_| Msg::AddRole)} style="background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap;">
+                                <button onclick={ctx.link().callback(|_| Msg::AddRole)} style="background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; margin-top: 10px;">
                                     { "Add Role Securely" }
                                 </button>
                             </div>

@@ -1,1 +1,7 @@
-[Sun Jul  5 08:15:42 2026] PHP 8.4.20 Development Server (http://localhost:8000) started
+[Sun Jul  5 08:20:49 2026] PHP 8.4.20 Development Server (http://localhost:8000) started
+[Sun Jul  5 08:22:35 2026] [::1]:51080 Accepted
+[Sun Jul  5 08:22:35 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:22:35 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:22:35 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 08:22:35 2026] Sending 824 bytes to TCP 192.168.178.132:8080 Payload: 08f6090c20dfbcfb73d8cb5ac6dbc35460545857aacd59d8a8be63c1c0926868;af9af99a7742724ea67f8230;a26f16127ec09ac94cd75d5f190d46f19ee272a0960de69a5e6daf5a0bd826e1925c28327c36a6233f3cca351c1520e2540a182a7ba4e7d0dab680b70faee26c4fb7225e4a3c5360d66e25a61321f4ea1926f8efa0735496030bd6ffaa04f70f03bea8a6fce905092438e69a63404ee4e74157c20661f48406d9da38aef9ea725c0bf0ffeb2d55bf61ceb7a830f1b706147044837b37903fbdd61fbfbb0b799f11c8ecdbe8dc75c3f431833976d232641a4dbe397f9108f336afcc9bb0b5fa5f885bc6b38218871cc5e465e11885c3d44964f381ac316cd9e1f96c8307ab69e52e4629ddf997122639e1b6cf035a0a15f41e5872b25e8f4516416e8f01e1829813324ead6598692c905bfa1d1980b363c5edc8f1e79bc24dec44caecaec18e01775c797b7e80b3e25e97ecbfe40b79c828d957e7fddb57cdb9e219a0189b949d6c016355bbc20d4879b97de6f38a628ebca3dcdfbbdc525d2955d7110773704c852023f9db270299219a3ddc018dce
+[Sun Jul  5 08:22:37 2026] [::1]:51080 Closing
