@@ -31,6 +31,7 @@ use serde::{Serialize, Deserialize};
 use embedded_storage::{ReadStorage, Storage};
 use esp_storage::FlashStorage;
 
+static mut LAST_TIMESTAMP: u64 = 0;
 
 #[embassy_executor::task]
 async fn connection(mut controller: WifiController<'static>) {
@@ -291,12 +292,15 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                         use aes_gcm::{Aes256Gcm, Key, Nonce};
                         #[allow(deprecated)]
                         use aes_gcm::aead::{AeadInPlace, KeyInit};
+                        use sha2::{Sha256, Digest};
                         
                         let ephemeral_pub = x25519_dalek::PublicKey::from(ephemeral_pub_bytes);
                         let shared_secret = esp_x25519_secret.diffie_hellman(&ephemeral_pub);
                         
+                        let tx_key_hash = Sha256::digest(shared_secret.as_bytes());
+                        
                         #[allow(deprecated)]
-                        let key = Key::<Aes256Gcm>::from_slice(shared_secret.as_bytes());
+                        let key = Key::<Aes256Gcm>::from_slice(&tx_key_hash);
                         let cipher = Aes256Gcm::new(key);
                         #[allow(deprecated)]
                         let nonce = Nonce::from_slice(&iv);
@@ -311,39 +315,47 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                             if cipher.decrypt_in_place_detached(nonce, b"", msg, tag).is_ok() {
                                 if let Ok(plaintext) = core::str::from_utf8(msg) {
                                     let mut inner_parts = plaintext.split(';');
-                                    let _ignored_role = inner_parts.next().unwrap_or("");
+                                    let timestamp_str = inner_parts.next().unwrap_or("");
                                     let cmd = inner_parts.next().unwrap_or("");
                                     let sig_hex = inner_parts.next().unwrap_or("");
                                     
-                                    let mut sig_bytes = [0u8; 64];
-                                    let mut valid_sig_format = true;
-                                    if sig_hex.len() == 128 {
-                                        for i in 0..64 {
-                                            if let Ok(b) = u8::from_str_radix(&sig_hex[i*2..i*2+2], 16) {
-                                                sig_bytes[i] = b;
-                                            } else { valid_sig_format = false; }
-                                        }
-                                    } else { valid_sig_format = false; }
+                                    let incoming_ts = timestamp_str.parse::<u64>().unwrap_or(0);
+                                    let is_replay = unsafe { incoming_ts <= LAST_TIMESTAMP };
                                     
-                                    if valid_sig_format {
-                                        let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-                                        use ed25519_dalek::Verifier;
+                                    if !is_replay {
+                                        let mut sig_bytes = [0u8; 64];
+                                        let mut valid_sig_format = true;
+                                        if sig_hex.len() == 128 {
+                                            for i in 0..64 {
+                                                if let Ok(b) = u8::from_str_radix(&sig_hex[i*2..i*2+2], 16) {
+                                                    sig_bytes[i] = b;
+                                                } else { valid_sig_format = false; }
+                                            }
+                                        } else { valid_sig_format = false; }
                                         
-                                        let mut role_authorized = false;
-                                        let mut is_supervisor = false;
-                                        let mut authenticated_role = heapless::String::<32>::new();
-                                        
-                                        if let Ok(supervisor_verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&supervisor_key) {
-                                            // 1. Try Supervisor Key mathematically
-                                            if supervisor_verifying_key.verify(cmd.as_bytes(), &sig).is_ok() {
-                                                role_authorized = true;
-                                                is_supervisor = true;
-                                                let _ = core::fmt::Write::write_str(&mut authenticated_role, "Supervisor");
-                                            } else {
-                                                // 2. Check dynamic roles mathematically
-                                                for entry in unsafe { &*core::ptr::addr_of!(ROLES) }.iter() {
-                                                    if let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&entry.pubkey) {
-                                                        if verifying_key.verify(cmd.as_bytes(), &sig).is_ok() {
+                                        if valid_sig_format {
+                                            let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+                                            use ed25519_dalek::Verifier;
+                                            
+                                            let mut role_authorized = false;
+                                            let mut is_supervisor = false;
+                                            let mut authenticated_role = heapless::String::<32>::new();
+                                            
+                                            let mut signed_payload = heapless::String::<256>::new();
+                                            use core::fmt::Write;
+                                            let _ = write!(&mut signed_payload, "{}|{}", timestamp_str, cmd);
+                                            
+                                            if let Ok(supervisor_verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&supervisor_key) {
+                                                // 1. Try Supervisor Key mathematically
+                                                if supervisor_verifying_key.verify(signed_payload.as_bytes(), &sig).is_ok() {
+                                                    role_authorized = true;
+                                                    is_supervisor = true;
+                                                    let _ = core::fmt::Write::write_str(&mut authenticated_role, "Supervisor");
+                                                } else {
+                                                    // 2. Check dynamic roles mathematically
+                                                    for entry in unsafe { &*core::ptr::addr_of!(ROLES) }.iter() {
+                                                        if let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&entry.pubkey) {
+                                                            if verifying_key.verify(signed_payload.as_bytes(), &sig).is_ok() {
                                                             let mut cert_msg = heapless::String::<128>::new();
                                                             use core::fmt::Write;
                                                             let mut pk_hex = heapless::String::<64>::new();
@@ -450,6 +462,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                     use core::fmt::Write;
                                                     
                                                     if allowed {
+                                                        unsafe { LAST_TIMESTAMP = incoming_ts; }
                                                         if response_msg == "Invalid Crypto Envelope" {
                                                             response_msg = "Command Executed";
                                                         }
@@ -478,8 +491,11 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                         } else {
                                             response_msg = "Signature verification failed or Unknown Role";
                                         }
+                                        } else {
+                                            response_msg = "Invalid Signature Format";
+                                        }
                                     } else {
-                                        response_msg = "Invalid Signature Format";
+                                        response_msg = "Replay Attack Detected";
                                     }
                                 } else {
                                     response_msg = "Invalid UTF-8 in payload";

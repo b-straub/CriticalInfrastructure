@@ -155,9 +155,8 @@ impl Component for App {
                 false
             }
             Msg::SendCommand(cmd_str) => {
-                if let (Some(seed), Some(role)) = (&self.seed, &self.active_role) {
+                if let (Some(seed), Some(_role)) = (&self.seed, &self.active_role) {
                     let seed_clone = seed.clone();
-                    let role_clone = role.clone();
                     let ip_clone = self.esp32_ip.clone();
                     let hex_pub = self.esp32_pubkey.clone();
                     
@@ -173,15 +172,18 @@ impl Component for App {
                     
                     let window = web_sys::window().unwrap();
                     spawn_local(async move {
+                        let timestamp = js_sys::Date::now() as u64;
+                        let signed_payload = format!("{}|{}", timestamp, cmd_str);
                         let signing_key = SigningKey::from_bytes(seed_clone.as_slice().try_into().unwrap());
-                        let signature = signing_key.sign(cmd_str.as_bytes());
+                        let signature = signing_key.sign(signed_payload.as_bytes());
                         let sig_hex = hex::encode(signature.to_bytes());
                         
-                        let plaintext = format!("{};{};{}", role_clone, cmd_str, sig_hex);
+                        let plaintext = format!("{};{};{}", timestamp, cmd_str, sig_hex);
                         
                         use aes_gcm::{Aes256Gcm, Key, Nonce};
                         use aes_gcm::aead::{AeadInPlace, KeyInit};
                         use rand_core::RngCore;
+                        use sha2::{Sha256, Digest};
                         
                         // Generate Ephemeral X25519 Key
                         let mut eph_seed = [0u8; 32];
@@ -192,13 +194,15 @@ impl Component for App {
                         let esp_pub = X25519PublicKey::from(esp_pub_bytes);
                         let shared_secret = ephemeral_secret.diffie_hellman(&esp_pub);
                         
+                        let tx_key_hash = Sha256::digest(shared_secret.as_bytes());
+                        let tx_key = Key::<Aes256Gcm>::from_slice(&tx_key_hash);
+                        
                         let mut iv = [0u8; 12];
                         OsRng.fill_bytes(&mut iv);
                         let nonce = Nonce::from_slice(&iv);
                         
                         let mut ciphertext = plaintext.into_bytes();
-                        let key = Key::<Aes256Gcm>::from_slice(shared_secret.as_bytes());
-                        let cipher = Aes256Gcm::new(key);
+                        let cipher = Aes256Gcm::new(tx_key);
                         
                         let tag = cipher.encrypt_in_place_detached(nonce, b"", &mut ciphertext).unwrap();
                         ciphertext.extend_from_slice(&tag);
@@ -252,8 +256,8 @@ impl Component for App {
                                                     if valid_crypto && resp_cipher.len() >= 16 {
                                                         let resp_eph_pub = X25519PublicKey::from(resp_eph_pub_bytes);
                                                         let dec_shared_secret = ephemeral_secret.diffie_hellman(&resp_eph_pub);
-                                                        let dec_key = Key::<Aes256Gcm>::from_slice(dec_shared_secret.as_bytes());
-                                                        let dec_cipher = Aes256Gcm::new(dec_key);
+                                                        let rx_key_hash = sha2::Sha256::digest(dec_shared_secret.as_bytes());
+                                                        let dec_cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&rx_key_hash));
                                                         
                                                         let len = resp_cipher.len();
                                                         let (msg, tag_bytes) = resp_cipher.split_at_mut(len - 16);
