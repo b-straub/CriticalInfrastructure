@@ -16,7 +16,12 @@ aes-gcm = "0.10"
 rand_core = { version = "0.6", features = ["getrandom"] }
 getrandom = { version = "0.2", features = ["js"] }
 hex = "0.4"
+zeroize = { version = "1", features = ["alloc"] }
 gloo-storage = "0.4.0"
-sha2 = "0.11.0"
+# Pinned to 0.10 to match aes-gcm 0.10 and the dalek curve crates (still on the
+# RustCrypto 0.10 trait generation). Using sha2 0.11 here dragged a second,
+# duplicate trait stack (digest 0.11 / hybrid-array / crypto-common 0.2) into the
+# WASM bundle. Revisit when the dalek crates migrate to the 0.11 generation.
+sha2 = "0.10"
 shared = { version = "0.1.0", path = "../shared" }
 gloo-timers = "0.4.0"

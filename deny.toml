@@ -1,0 +1,34 @@
+# cargo-deny configuration.  Install:  cargo install cargo-deny
+# Run:  cargo deny check
+#
+# This gate catches exactly the kind of issue the crypto audit found:
+# duplicate crate versions (two RustCrypto trait stacks in one binary) and
+# any RUSTSEC advisory against a dependency.
+
+[advisories]
+version = 2
+yanked = "deny"
+# ignore = []  # add "RUSTSEC-XXXX-YYYY" entries here with justification
+
+[bans]
+# Warn when the tree pulls more than one version of the same crate. The webapp
+# previously dragged in two `digest` / `crypto-common` / `block-buffer`
+# generations because sha2 0.11 was mixed with aes-gcm 0.10 + dalek.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]

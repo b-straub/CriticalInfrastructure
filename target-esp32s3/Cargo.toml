@@ -3,6 +3,13 @@ name = "target-esp32s3"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Derive the device identity from a read-protected eFuse HMAC key via the
+# hardware HMAC-SHA256 peripheral (the key never leaves hardware). Requires the
+# eFuse key to be provisioned; OFF by default so dev builds keep the RNG/flash
+# path. See docs/formal/EFUSE-HARDENING.md.
+efuse-hmac-identity = []
+
 [dependencies]
 shared = { path = "../shared" }
 ed25519-dalek = { version = "2.1.1", default-features = false }
@@ -27,7 +34,12 @@ lcd1602-driver = "0.3.0"
 heapless = { version = "0.8", features = ["serde"] }
 embassy-futures = "0.1.2"
 x25519-dalek = { version = "2.0.1", default-features = false, features = ["static_secrets"] }
-aes-gcm = { version = "0.11.0", default-features = false, features = ["aes"] }
+# 0.10 (not 0.11): keeps a single RustCrypto trait generation in the firmware,
+# coherent with the dalek crates. The AES-GCM algorithm is identical; 0.11 is
+# trait/API churn and would duplicate digest/crypto-common in flash.
+# The ESP32-S3 AES peripheral has no GCM mode (esp-hal exposes only ECB/CBC/CTR/
+# CFB/OFB), so GCM stays in constant-time software here.
+aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
 esp-storage = { version = "0.7.0", features = ["esp32s3"] }
 embedded-storage = "0.3.1"
 serde = { version = "1.0.228", features = ["derive"], default-features = false }
