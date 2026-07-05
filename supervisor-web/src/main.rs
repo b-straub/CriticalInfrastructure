@@ -5,6 +5,7 @@ use wasm_bindgen_futures::spawn_local;
 use ed25519_dalek::{SigningKey, Signer};
 use x25519_dalek::{StaticSecret, PublicKey as X25519PublicKey};
 use shared::terminology::*;
+use shared::Role;
 use rand_core::OsRng;
 use hex;
 use gloo_storage::{LocalStorage, Storage};
@@ -18,6 +19,10 @@ extern "C" {
     async fn get_passkey_prf() -> Result<JsValue, JsValue>;
 }
 
+// The PRF-derived seed is cached only briefly: any window this long without a
+// command wipes it from memory, forcing a (fast, biometric) re-derivation.
+const SEED_TTL_MS: u32 = 60_000;
+
 enum Msg {
     UpdateUserId(String),
     Register,
@@ -26,12 +31,14 @@ enum Msg {
     AuthError(String),
     UpdateIp(String),
     UpdateEspPubkey(String),
+    UpdateEspSigPubkey(String),
     SendCommand(String),
     UpdateNewRoleName(String),
     UpdateNewRolePubkey(String),
     UpdateSupervisorPubkey(String),
     AddRole,
     Logout,
+    SeedExpired,
     CommandResponse(String),
     ClearColor,
     StartCommandWithColor(String, String), // Command, Color
@@ -39,12 +46,15 @@ enum Msg {
 
 struct App {
     user_id: String,
-    active_role: Option<String>,
-    seed: Option<Vec<u8>>,
+    active_role: Option<Role>,
+    // PRF-derived key material. Zeroizing wipes the bytes on drop instead of
+    // leaving them in freed WASM heap; held only for a short idle window.
+    seed: Option<zeroize::Zeroizing<Vec<u8>>>,
     error: Option<String>,
     pubkey_hex: Option<String>,
     esp32_ip: String,
     esp32_pubkey: String,
+    esp32_sig_pubkey: String,
     supervisor_pubkey: String,
     new_role_name: String,
     new_role_pubkey: String,
@@ -53,6 +63,34 @@ struct App {
     parsed_roles: Option<Vec<(String, String)>>,
     command_color: Option<String>,
     active_timeout: Option<gloo_timers::callback::Timeout>,
+    seed_timeout: Option<gloo_timers::callback::Timeout>,
+}
+
+impl App {
+    // (Re)arm the sliding idle timeout that wipes the cached seed.
+    fn arm_seed_timeout(&mut self, ctx: &Context<Self>) {
+        let link = ctx.link().clone();
+        self.seed_timeout = Some(gloo_timers::callback::Timeout::new(SEED_TTL_MS, move || {
+            link.send_message(Msg::SeedExpired);
+        }));
+    }
+
+    // The connection target and all trust anchors (incl. the supervisor pubkey)
+    // must be provisioned before the device can be used. Forces the config panel
+    // open for first-time setup.
+    fn config_needs_setup(&self) -> bool {
+        self.esp32_ip.trim().is_empty()
+            || self.esp32_pubkey.len() != 64
+            || self.esp32_sig_pubkey.len() != 64
+            || self.supervisor_pubkey.len() != 64
+    }
+
+    // The authenticated user is the supervisor iff their own public key matches
+    // the provisioned supervisor pubkey. Local check -- no device round-trip.
+    fn is_local_supervisor(&self) -> bool {
+        self.supervisor_pubkey.len() == 64
+            && self.pubkey_hex.as_deref() == Some(self.supervisor_pubkey.as_str())
+    }
 }
 
 impl Component for App {
@@ -60,10 +98,15 @@ impl Component for App {
     type Properties = ();
 
     fn create(_ctx: &Context<Self>) -> Self {
-        let user_id = LocalStorage::get::<String>("user_id").unwrap_or_else(|_| "supervisor@prfmail.de".to_string());
-        let esp32_ip = LocalStorage::get::<String>("esp32_ip").unwrap_or_else(|_| "192.168.178.132".to_string());
-        let esp32_pubkey = LocalStorage::get::<String>("esp32_pubkey").unwrap_or_else(|_| "b755ced64d4a27ce32afcf199f18a3ed1f31897028b0ff6e55191ea449db2644".to_string());
-        let supervisor_pubkey = LocalStorage::get::<String>("supervisor_pubkey").unwrap_or_else(|_| "ccdef32d7cde52d7bf6c7dbde887dc9d25414e9ff57bb5aee5d5da65e5f6e439".to_string());
+        let user_id = LocalStorage::get::<String>("user_id").unwrap_or_default();
+        let esp32_ip = LocalStorage::get::<String>("esp32_ip").unwrap_or_default();
+        // Trust anchors (the ESP ROM/signing pubkeys and the supervisor pubkey)
+        // default to empty: they must be provisioned explicitly, never silently
+        // trusted from a value baked into the build. Once entered they persist in
+        // LocalStorage.
+        let esp32_pubkey = LocalStorage::get::<String>("esp32_pubkey").unwrap_or_default();
+        let esp32_sig_pubkey = LocalStorage::get::<String>("esp32_sig_pubkey").unwrap_or_default();
+        let supervisor_pubkey = LocalStorage::get::<String>("supervisor_pubkey").unwrap_or_default();
         
         Self {
             user_id,
@@ -73,6 +116,7 @@ impl Component for App {
             pubkey_hex: None,
             esp32_ip,
             esp32_pubkey,
+            esp32_sig_pubkey,
             supervisor_pubkey,
             new_role_name: String::new(),
             new_role_pubkey: String::new(),
@@ -81,6 +125,7 @@ impl Component for App {
             parsed_roles: None,
             command_color: None,
             active_timeout: None,
+            seed_timeout: None,
         }
     }
 
@@ -99,6 +144,11 @@ impl Component for App {
             Msg::UpdateEspPubkey(key) => {
                 self.esp32_pubkey = key.clone();
                 let _ = LocalStorage::set("esp32_pubkey", key);
+                true
+            }
+            Msg::UpdateEspSigPubkey(key) => {
+                self.esp32_sig_pubkey = key.clone();
+                let _ = LocalStorage::set("esp32_sig_pubkey", key);
                 true
             }
             Msg::Register => {
@@ -142,7 +192,8 @@ impl Component for App {
                 let signing_key = SigningKey::from_bytes(seed.as_slice().try_into().unwrap());
                 let verifying_key = signing_key.verifying_key();
                 self.pubkey_hex = Some(hex::encode(verifying_key.as_bytes()));
-                self.seed = Some(seed);
+                self.seed = Some(zeroize::Zeroizing::new(seed));
+                self.arm_seed_timeout(ctx);
                 self.active_role = None; // Force user to fetch role from ESP32
                 self.error = None;
                 self.is_fetching_role = true;
@@ -151,6 +202,14 @@ impl Component for App {
             }
             Msg::AuthError(err) => {
                 self.error = Some(err);
+                true
+            }
+            Msg::SeedExpired => {
+                // Idle window elapsed: wipe the cached seed (Zeroizing clears the
+                // bytes on drop). The next command will prompt a biometric re-auth.
+                self.seed = None;
+                self.seed_timeout = None;
+                self.error = Some("Session key expired and was wiped from memory. Re-authenticate to send commands.".to_string());
                 true
             }
             Msg::Logout => {
@@ -163,12 +222,13 @@ impl Component for App {
                 self.parsed_roles = None;
                 self.command_color = None;
                 self.active_timeout = None;
+                self.seed_timeout = None;
                 true
             }
             Msg::CommandResponse(resp) => {
                 self.is_fetching_role = false;
-                if ["Admin", "Supervisor", "Operator", "Observer"].contains(&resp.as_str()) {
-                    self.active_role = Some(resp);
+                if let Some(role) = Role::from_wire(&resp) {
+                    self.active_role = Some(role);
                     self.last_response = None;
                 } else if resp.starts_with("ROLES:") {
                     let mut roles = Vec::new();
@@ -232,10 +292,12 @@ impl Component for App {
                 false
             }
             Msg::SendCommand(cmd_str) => {
+                let has_seed = self.seed.is_some();
                 if let Some(seed) = &self.seed {
                     let seed_clone = seed.clone();
                     let ip_clone = self.esp32_ip.clone();
                     let hex_pub = self.esp32_pubkey.clone();
+                    let sig_pub_hex = self.esp32_sig_pubkey.clone();
                     
                     let mut esp_pub_bytes = [0u8; 32];
                     if hex_pub.len() == 64 {
@@ -344,8 +406,48 @@ impl Component for App {
                                                         
                                                         if dec_cipher.decrypt_in_place_detached(resp_nonce, b"", msg, resp_tag).is_ok() {
                                                             if let Ok(plaintext) = core::str::from_utf8(msg) {
-                                                                web_sys::console::log_1(&format!("ESP32 Verified Response: {}", plaintext).into());
-                                                                link.send_message(Msg::CommandResponse(plaintext.to_string()));
+                                                                // Decrypted payload is "<ts>;<message>;<sig_hex>".
+                                                                // Decryption alone is NOT enough: an active MITM can
+                                                                // derive the ephemeral response key. We only trust the
+                                                                // response if the ESP's Ed25519 signature over
+                                                                // "resp|<ts>|<message>" verifies against the provisioned
+                                                                // ESP signing pubkey AND the ts matches our request.
+                                                                let mut rp = plaintext.splitn(3, ';');
+                                                                let rts = rp.next().unwrap_or("");
+                                                                let rmsg = rp.next().unwrap_or("");
+                                                                let rsig_hex = rp.next().unwrap_or("");
+
+                                                                let esp_sig_pub_bytes = <[u8; 32]>::try_from(
+                                                                    hex::decode(&sig_pub_hex).unwrap_or_default().as_slice()
+                                                                ).ok();
+                                                                let sig_bytes = <[u8; 64]>::try_from(
+                                                                    hex::decode(rsig_hex).unwrap_or_default().as_slice()
+                                                                ).ok();
+
+                                                                let verified = match (esp_sig_pub_bytes, sig_bytes) {
+                                                                    (Some(pk_bytes), Some(sb)) => {
+                                                                        use ed25519_dalek::Verifier;
+                                                                        match ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes) {
+                                                                            Ok(vk) => {
+                                                                                let signed = format!("resp|{}|{}", rts, rmsg);
+                                                                                vk.verify(signed.as_bytes(), &ed25519_dalek::Signature::from_bytes(&sb)).is_ok()
+                                                                            }
+                                                                            Err(_) => false,
+                                                                        }
+                                                                    }
+                                                                    _ => false,
+                                                                };
+
+                                                                if verified && timestamp.to_string() == rts {
+                                                                    web_sys::console::log_1(&format!("ESP32 Verified Response: {}", rmsg).into());
+                                                                    link.send_message(Msg::CommandResponse(rmsg.to_string()));
+                                                                } else if verified {
+                                                                    web_sys::console::log_1(&"ESP32 response signature valid but timestamp mismatch (stale/replayed).".into());
+                                                                    link.send_message(Msg::CommandResponse("Rejected: stale ESP32 response (timestamp mismatch)".to_string()));
+                                                                } else {
+                                                                    web_sys::console::log_1(&"ESP32 response signature INVALID -- rejected (possible MITM/forgery)!".into());
+                                                                    link.send_message(Msg::CommandResponse("Rejected: ESP32 response signature INVALID (possible MITM)".to_string()));
+                                                                }
                                                             }
                                                         } else {
                                                             web_sys::console::log_1(&"Failed to decrypt ESP32 response!".into());
@@ -360,15 +462,19 @@ impl Component for App {
                                             Err(_) => web_sys::console::log_1(&"Command sent successfully, but couldn't read response body.".into()),
                                         }
                                     } else {
-                                        web_sys::console::log_1(&format!("Proxy returned error: HTTP {}", resp.status()).into());
+                                        link.send_message(Msg::CommandResponse(format!("Connection error: proxy returned HTTP {}. Check the device IP and that it is reachable, then retry.", resp.status())));
                                     }
                                 }
                             }
-                            Err(e) => web_sys::console::log_1(&format!("Failed to send command: {:?}", e).into()),
+                            Err(e) => link.send_message(Msg::CommandResponse(format!("Connection error: could not reach the proxy ({:?}). Check the proxy and device IP, then retry.", e))),
                         }
                     });
                 } else {
                     self.error = Some("No keys generated. Click 'Register WebAuthn' first.".to_string());
+                }
+                // Sliding idle window: active use keeps the seed alive; inactivity wipes it.
+                if has_seed {
+                    self.arm_seed_timeout(ctx);
                 }
                 true
             }
@@ -410,7 +516,7 @@ impl Component for App {
                     <p>{ "Authenticate with your FIDO2 Passkey to unlock the dashboard." }</p>
                     <div style="margin-bottom: 20px; display: flex; align-items: center;">
                         <label style="margin-right: 10px;">{ "User ID:" }</label>
-                        <input type="text" value={self.user_id.clone()} oninput={ctx.link().callback(|e: InputEvent| {
+                        <input type="text" placeholder="your user id / email" value={self.user_id.clone()} oninput={ctx.link().callback(|e: InputEvent| {
                             let target = e.target().unwrap();
                             let value = js_sys::Reflect::get(&target, &wasm_bindgen::JsValue::from_str("value")).unwrap().as_string().unwrap();
                             Msg::UpdateUserId(value)
@@ -429,7 +535,7 @@ impl Component for App {
                                 { if self.is_fetching_role {
                                     format!("Authenticated: Fetching role from ESP32...")
                                 } else {
-                                    format!("Authenticated: {}", self.active_role.as_deref().unwrap_or("Role Fetch Failed / Unknown"))
+                                    format!("Authenticated: {}", self.active_role.map(|r| r.as_str()).unwrap_or("Role Fetch Failed / Unknown"))
                                 } }
                             </strong>
                             <div style="font-size: 0.85em; margin-top: 5px; opacity: 0.9; font-family: monospace;">
@@ -441,12 +547,13 @@ impl Component for App {
                         </button>
                     </div>
                     
-                    if !self.is_fetching_role && self.active_role.as_deref() == Some("Supervisor") {
+                    if !self.is_fetching_role && (self.is_local_supervisor() || self.config_needs_setup()) {
                         <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 15px; max-width: 800px; padding: 15px; background: #1e1e1e; border: 1px dashed #555; border-radius: 6px;">
                             <h4 style="margin: 0; color: #888;">{ "Connection Configuration" }</h4>
                             <div style="display: flex; flex-direction: column;">
                                 <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 IP Address:" }</label>
                                 <input type="text"
+                                    placeholder="device IP address"
                                     value={self.esp32_ip.clone()}
                                     oninput={ctx.link().callback(|e: InputEvent| {
                                         let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
@@ -458,6 +565,7 @@ impl Component for App {
                             <div style="display: flex; flex-direction: column; width: 100%;">
                                 <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 ROM Pubkey:" }</label>
                                 <input type="text"
+                                    placeholder="64 hex chars — from device boot log"
                                     value={self.esp32_pubkey.clone()}
                                     oninput={ctx.link().callback(|e: InputEvent| {
                                         let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
@@ -467,8 +575,21 @@ impl Component for App {
                                 />
                             </div>
                             <div style="display: flex; flex-direction: column; width: 100%;">
+                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 Sig Pubkey:" }</label>
+                                <input type="text"
+                                    placeholder="64 hex chars — from device boot log"
+                                    value={self.esp32_sig_pubkey.clone()}
+                                    oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                        Msg::UpdateEspSigPubkey(input.value())
+                                    })}
+                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
+                                />
+                            </div>
+                            <div style="display: flex; flex-direction: column; width: 100%;">
                                 <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "Supervisor Pubkey:" }</label>
                                 <input type="text"
+                                    placeholder="64 hex chars — supervisor public key"
                                     value={self.supervisor_pubkey.clone()}
                                     oninput={ctx.link().callback(|e: InputEvent| {
                                         let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
@@ -477,6 +598,13 @@ impl Component for App {
                                     style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
                                 />
                             </div>
+                        </div>
+                    }
+
+                    if !self.is_fetching_role && !self.is_local_supervisor() && !self.config_needs_setup() && self.active_role.is_none() {
+                        <div style="background: #4a2c00; border-left: 4px solid #ffa000; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
+                            <strong style="color: #ffa000;">{ "Cannot verify the device" }</strong>
+                            <p style="margin: 5px 0 0 0; color: #ddd;">{ "The connection is configured, but the device could not be reached or its response could not be verified. Trust anchors are managed by the supervisor \u{2014} please clarify the connection details with your supervisor." }</p>
                         </div>
                     }
 
@@ -497,8 +625,8 @@ impl Component for App {
                         </div>
                     }
 
-                    if let Some(role) = &self.active_role {
-                        if role == "Supervisor" {
+                    if let Some(role) = self.active_role {
+                        if role == Role::Supervisor {
                             <div style="background: #1e1e1e; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #444;">
                                 <h3 style="margin-top: 0; color: #ffa000;">{ "Supervisor CA Tools" }</h3>
                                 <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32." }</p>
@@ -617,13 +745,13 @@ impl Component for App {
                                 }
                             </div>
                         } else {
-                            <h3>{ format!("System Controls (Role: {})", role) }</h3>
+                            <h3>{ format!("System Controls (Role: {})", role.as_str()) }</h3>
                             <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
                                 <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(CMD_READ_SENSOR.to_string(), "green".to_string()))} style="background: #4caf50; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
                                     { format!("Read Sensors ({}s Green)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
                                 </button>
                                 
-                                if role == "Operator" || role == "Admin" {
+                                if role == Role::Operator || role == Role::Admin {
                                     <>
                                         <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(format!("{}20.0", CMD_SET_THRESHOLD), "yellow".to_string()))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
                                             { format!("Set Threshold (20C) ({}s Yellow)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
@@ -634,7 +762,7 @@ impl Component for App {
                                     </>
                                 }
                                 
-                                if role == "Admin" {
+                                if role == Role::Admin {
                                     <>
                                         <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(CMD_CLEAR_ALARM.to_string(), "red".to_string()))} style="background: #2196f3; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
                                             { format!("Clear Alarm ({}s Red)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
