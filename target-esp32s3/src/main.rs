@@ -253,8 +253,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
             dht_pin.set_output_enable(true);
             dht_pin.set_low();
             dht_delay.delay_millis(20);
-            dht_pin.set_high();
-            dht_delay.delay_micros(30);
+            // Let the external pull-up pull the line HIGH! Don't drive it HIGH actively.
             dht_pin.set_output_enable(false);
             dht_pin.set_input_enable(true);
             
@@ -283,16 +282,22 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
             
             if success {
                 let checksum = data[0].wrapping_add(data[1]).wrapping_add(data[2]).wrapping_add(data[3]);
-                if checksum == data[4] {
+                if checksum == data[4] && (data[0] > 0 || data[2] > 0) {
                     hum = data[0] as f32 + (data[1] as f32 / 10.0);
                     temp = data[2] as f32 + (data[3] as f32 / 10.0);
+                } else {
+                    success = false;
                 }
             }
 
             lcd.set_cursor_pos((0, 1));
             let mut status_str = heapless::String::<16>::new();
             use core::fmt::Write;
-            let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
+            if success {
+                let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
+            } else {
+                let _ = write!(&mut status_str, "Sensor Error    ");
+            }
             lcd.write_str_to_cur(&status_str);
                 }
             }
