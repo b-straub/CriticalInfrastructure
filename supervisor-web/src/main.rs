@@ -385,42 +385,45 @@ impl Component for App {
                         </button>
                     </div>
                     
-                    <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 15px; max-width: 800px;">
-                        <div style="display: flex; flex-direction: column;">
-                            <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 IP Address:" }</label>
-                            <input type="text"
-                                value={self.esp32_ip.clone()}
-                                oninput={ctx.link().callback(|e: InputEvent| {
-                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                    Msg::UpdateIp(input.value())
-                                })}
-                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; max-width: 300px; box-sizing: border-box; font-size: 16px;"
-                            />
+                    if !self.is_fetching_role && (self.active_role.as_deref() == Some("Supervisor") || self.active_role.is_none()) {
+                        <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 15px; max-width: 800px; padding: 15px; background: #1e1e1e; border: 1px dashed #555; border-radius: 6px;">
+                            <h4 style="margin: 0; color: #888;">{ "Connection Configuration" }</h4>
+                            <div style="display: flex; flex-direction: column;">
+                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 IP Address:" }</label>
+                                <input type="text"
+                                    value={self.esp32_ip.clone()}
+                                    oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                        Msg::UpdateIp(input.value())
+                                    })}
+                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; max-width: 300px; box-sizing: border-box; font-size: 16px;"
+                                />
+                            </div>
+                            <div style="display: flex; flex-direction: column; width: 100%;">
+                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 ROM Pubkey:" }</label>
+                                <input type="text"
+                                    value={self.esp32_pubkey.clone()}
+                                    oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                        Msg::UpdateEspPubkey(input.value())
+                                    })}
+                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
+                                />
+                            </div>
+                            <div style="display: flex; flex-direction: column; width: 100%;">
+                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "Supervisor Pubkey:" }</label>
+                                <input type="text"
+                                    value={self.supervisor_pubkey.clone()}
+                                    oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                        Msg::UpdateSupervisorPubkey(input.value())
+                                    })}
+                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
+                                />
+                            </div>
                         </div>
-                        <div style="display: flex; flex-direction: column; width: 100%;">
-                            <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 ROM Pubkey:" }</label>
-                            <input type="text"
-                                value={self.esp32_pubkey.clone()}
-                                oninput={ctx.link().callback(|e: InputEvent| {
-                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                    Msg::UpdateEspPubkey(input.value())
-                                })}
-                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
-                            />
-                        </div>
-                        <div style="display: flex; flex-direction: column; width: 100%;">
-                            <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "Supervisor Pubkey:" }</label>
-                            <input type="text"
-                                value={self.supervisor_pubkey.clone()}
-                                oninput={ctx.link().callback(|e: InputEvent| {
-                                    let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                    Msg::UpdateSupervisorPubkey(input.value())
-                                })}
-                                style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
-                            />
-                        </div>
-                    </div>
-                    
+                    }
+
                     <hr style="border-color: #333; margin: 30px 0;" />
                     
                     if let Some(resp) = &self.last_response {
@@ -439,7 +442,7 @@ impl Component for App {
                     }
 
                     if let Some(role) = &self.active_role {
-                        if role == "Supervisor" || role == "Admin" {
+                        if role == "Supervisor" {
                             <div style="background: #1e1e1e; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #444;">
                                 <h3 style="margin-top: 0; color: #ffa000;">{ "Supervisor CA Tools" }</h3>
                                 <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32." }</p>

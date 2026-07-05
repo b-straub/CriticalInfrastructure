@@ -1,1 +1,13 @@
-[Sun Jul  5 09:08:02 2026] PHP 8.4.20 Development Server (http://localhost:8000) started
+[Sun Jul  5 09:11:54 2026] PHP 8.4.20 Development Server (http://localhost:8000) started
+[Sun Jul  5 09:12:08 2026] [::1]:51515 Accepted
+[Sun Jul  5 09:12:08 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 09:12:08 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 09:12:08 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 09:12:08 2026] Sending 420 bytes to TCP 192.168.178.132:8080 Payload: 688d821dd2e6f9eb3fc854b289700226a0f9085e65dd87cd3c2efdfef2137308;f71e0306adbe08bf5d22a3a2;9e8579c23e093b4e689e1b99898d28ccd8dbb334a19d76ef44efb8a3bb6338377a9e79488ed8cc11adce17693d26514e58f13c65e672d3cca1dfee7a45adf5135d4cba077f0f85399fe9dbb181c11df091da63ae5c49abd3f29141ecbd4ff7af8f7ae6259b339022933ee4c500bc5f1f520430901a1b10eb25367f6edd085ba6d669e895c9ba9f9bafde146819929b27cc33d25f2ff44d87548a3cd94926bf8a58469d0c5e
+[Sun Jul  5 09:12:10 2026] [::1]:51515 Closing
+[Sun Jul  5 09:12:28 2026] [::1]:51521 Accepted
+[Sun Jul  5 09:12:28 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 09:12:28 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 09:12:28 2026] Xdebug: [Step Debug] Could not connect to debugging client. Tried: 127.0.0.1:9003 (through xdebug.client_host/xdebug.client_port).
+[Sun Jul  5 09:12:28 2026] Sending 420 bytes to TCP 192.168.178.132:8080 Payload: 394e811e8fa8770f9d4d4949d598f1172ae3b6e9fe1867422d2e15eccee6a650;06a3bcfd2db2f95fc73a1542;691964792b36ca49e5d5e6ab04733e1d8fb3905a2911301c6035f974c6ae5587c2adf73d361b326c877513c9a17ab649f3543e15bbd22665767e4bc246bee187b25c03a4f7e52d6c92081104eebca627bee5d7ebac5b8fd50ca6313427752aae5e5bfb01c5344f7a6817a9af27b57fe0f069f50eb4441f02fb4f4fa97a6db08ea74bafb3ebcfa18b770eec9b76aae9673bd0283c416986deb6470f9156a75c8218fcfc68cc
+[Sun Jul  5 09:12:31 2026] [::1]:51521 Closing
