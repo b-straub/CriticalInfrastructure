@@ -369,8 +369,8 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                         }
                     } else { valid_crypto = false; }
                     
-                    let mut ciphertext = heapless::Vec::<u8, 256>::new();
-                    if ciphertext_hex.len() % 2 == 0 && ciphertext_hex.len() <= 512 {
+                    let mut ciphertext = heapless::Vec::<u8, 1024>::new();
+                    if ciphertext_hex.len() % 2 == 0 && ciphertext_hex.len() <= 2048 {
                         for i in 0..(ciphertext_hex.len() / 2) {
                             if let Ok(b) = u8::from_str_radix(&ciphertext_hex[i*2..i*2+2], 16) {
                                 let _ = ciphertext.push(b);
@@ -434,7 +434,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                             let mut is_supervisor = false;
                                             let mut authenticated_role = heapless::String::<32>::new();
                                             
-                                            let mut signed_payload = heapless::String::<256>::new();
+                                            let mut signed_payload = heapless::String::<512>::new();
                                             use core::fmt::Write;
                                             let _ = write!(&mut signed_payload, "{}|{}", timestamp_str, cmd);
                                             

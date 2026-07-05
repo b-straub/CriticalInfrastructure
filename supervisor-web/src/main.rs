@@ -319,7 +319,17 @@ impl Component for App {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         html! {
-            <div class="container">
+            <div class="container" style="max-width: 900px; margin: 0 auto; font-family: 'Inter', system-ui, sans-serif; background: #121212; color: #f5f5f5; padding: 30px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+                <style>
+                    { "
+                        body { background: #0a0a0a; display: flex; justify-content: center; padding-top: 50px; margin: 0; }
+                        h2 { font-weight: 600; font-size: 24px; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 25px; }
+                        input:focus, select:focus { outline: none; border-color: #ffa000; box-shadow: 0 0 5px rgba(255, 160, 0, 0.5); }
+                        button { transition: opacity 0.2s, transform 0.1s; }
+                        button:active:not(:disabled) { transform: scale(0.98); }
+                        button:hover:not(:disabled) { opacity: 0.9; }
+                    " }
+                </style>
                 <h2>{ "Critical Infrastructure Dashboard" }</h2>
                 
                 if self.seed.is_none() {
@@ -422,7 +432,15 @@ impl Component for App {
                                         style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 100%; height: 35px; box-sizing: border-box; font-family: monospace;"
                                     />
                                 </div>
-                                <button onclick={ctx.link().callback(|_| Msg::AddRole)} style="background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; margin-top: 10px;">
+                                <button 
+                                    onclick={ctx.link().callback(|_| Msg::AddRole)}
+                                    disabled={self.new_role_name.is_empty()}
+                                    style={if self.new_role_name.is_empty() {
+                                        "background: #555; color: #888; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: not-allowed; white-space: nowrap; margin-top: 10px;"
+                                    } else {
+                                        "background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap; margin-top: 10px; transition: background 0.3s ease;"
+                                    }}
+                                >
                                     { "Add Role Securely" }
                                 </button>
                             </div>
