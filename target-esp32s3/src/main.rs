@@ -150,6 +150,10 @@ async fn main(spawner: Spawner) {
     let mut delay = esp_hal::delay::Delay::new();
     let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
     
+    // Set up GPIO21 for DHT11 data line
+    use esp_hal::gpio::Flex;
+    let mut dht_pin = Flex::new(peripherals.GPIO21);
+    
     lcd.clean_display();
     lcd.write_str_to_cur("Init Network...");
 
@@ -225,6 +229,57 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
         info!("Listening on TCP:8080...");
         if let Err(e) = socket.accept(8080).await {
             info!("Accept error: {:?}", e);
+            // Socket timeout - Idle mode
+            // Read DHT11 and update display!
+            let mut temp = 24.5;
+            let mut hum = 45.0;
+            
+            let mut dht_delay = esp_hal::delay::Delay::new();
+            dht_pin.set_output_enable(true);
+            dht_pin.set_low();
+            dht_delay.delay_millis(20);
+            dht_pin.set_high();
+            dht_delay.delay_micros(30);
+            dht_pin.set_output_enable(false);
+            dht_pin.set_input_enable(true);
+            
+            let mut t = 0;
+            while dht_pin.is_high() && t < 100 { dht_delay.delay_micros(1); t += 1; }
+            t = 0;
+            while dht_pin.is_low() && t < 100 { dht_delay.delay_micros(1); t += 1; }
+            t = 0;
+            while dht_pin.is_high() && t < 100 { dht_delay.delay_micros(1); t += 1; }
+            
+            let mut data = [0u8; 5];
+            let mut success = true;
+            for i in 0..40 {
+                t = 0;
+                while dht_pin.is_low() && t < 100 { dht_delay.delay_micros(1); t += 1; }
+                if t >= 100 { success = false; break; }
+                
+                t = 0;
+                while dht_pin.is_high() && t < 100 { dht_delay.delay_micros(1); t += 1; }
+                if t >= 100 { success = false; break; }
+                
+                if t > 40 {
+                    data[i / 8] |= 1 << (7 - (i % 8));
+                }
+            }
+            
+            if success {
+                let checksum = data[0].wrapping_add(data[1]).wrapping_add(data[2]).wrapping_add(data[3]);
+                if checksum == data[4] {
+                    hum = data[0] as f32 + (data[1] as f32 / 10.0);
+                    temp = data[2] as f32 + (data[3] as f32 / 10.0);
+                }
+            }
+
+            lcd.set_cursor_pos((0, 1));
+            let mut status_str = heapless::String::<16>::new();
+            use core::fmt::Write;
+            let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
+            lcd.write_str_to_cur(&status_str);
+
             continue;
         }
         
@@ -465,8 +520,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                     if allowed {
                                                         unsafe { LAST_TIMESTAMP = incoming_ts; }
                                                         if response_msg == "Invalid Crypto Envelope" {
-                                                            // Provide a useful telemetry back loop from the (mocked) DHT11 environmental sensor
-                                                            response_msg = "Command Executed. DHT11: 24.5C / 45.0% RH";
+                                                            response_msg = "Command Executed. (Sensors visible on local display)";
                                                         }
                                                         let _ = write!(&mut status_str, "{:<6} Pass   ", color_name);
                                                         lcd.write_str_to_cur(&status_str);
