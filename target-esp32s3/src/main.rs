@@ -630,7 +630,7 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                                                             unsafe { ALARM_ACTIVE = false; }
                                                             let _ = write!(&mut dynamic_msg, "Alarm Cleared");
                                                             allowed = true; 
-                                                            color_name = "Blue";
+                                                            color_name = "Red";
                                                         }
                                                     } else if cmd.starts_with(CMD_WHOAMI) {
                                                         allowed = true;
@@ -659,13 +659,13 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                                                         let _ = write!(&mut status_str, "{:<6} Pass   ", color_name);
                                                         lcd.write_str_to_cur(&status_str);
                                                         
-                                                        if cmd.starts_with(CMD_COLOR_RED) {
+                                                        if cmd.starts_with(CMD_COLOR_RED) || cmd.starts_with(CMD_CLEAR_ALARM) {
                                                             data = [colors::RED; 8];
                                                         } else if cmd.starts_with(CMD_COLOR_YELLOW) || cmd.starts_with(CMD_SET_THRESHOLD) {
                                                             data = [colors::YELLOW; 8];
                                                         } else if cmd.starts_with(CMD_COLOR_GREEN) || cmd.starts_with(CMD_READ_SENSOR) {
                                                             data = [colors::GREEN; 8];
-                                                        } else if cmd.starts_with(CMD_CLEAR_ALARM) || cmd.starts_with(CMD_ADD_ROLE) || cmd.starts_with(CMD_REVOKE_ROLE) || cmd.starts_with(CMD_LIST_ROLES) {
+                                                        } else if cmd.starts_with(CMD_ADD_ROLE) || cmd.starts_with(CMD_REVOKE_ROLE) || cmd.starts_with(CMD_LIST_ROLES) || cmd.starts_with(CMD_WHOAMI) {
                                                             data = [colors::BLUE; 8]; // Blue for system actions
                                                         } else {
                                                             data = [colors::WHITE; 8];
