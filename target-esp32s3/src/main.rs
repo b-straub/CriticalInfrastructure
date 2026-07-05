@@ -234,7 +234,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
             let mut temp = 24.5;
             let mut hum = 45.0;
             
-            let mut dht_delay = esp_hal::delay::Delay::new();
+            let dht_delay = esp_hal::delay::Delay::new();
             dht_pin.set_output_enable(true);
             dht_pin.set_low();
             dht_delay.delay_millis(20);
