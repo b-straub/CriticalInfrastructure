@@ -148,6 +148,12 @@ async fn main(spawner: Spawner) {
     
     let mut sender = I2cSender::new(&mut i2c, 0x27);
     let mut delay = esp_hal::delay::Delay::new();
+    
+    // Delay 500ms before initializing the LCD. During a warm flash (without power cycling),
+    // the HD44780 controller can be left in a weird state. Giving it time and allowing
+    // the driver to send a clean init sequence fixes "bogus" characters on reboot.
+    delay.delay_millis(500);
+    
     let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
     
     // Set up GPIO21 for DHT11 data line
