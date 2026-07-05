@@ -18,3 +18,4 @@ getrandom = { version = "0.2", features = ["js"] }
 hex = "0.4"
 gloo-storage = "0.4.0"
 sha2 = "0.11.0"
+shared = { version = "0.1.0", path = "../shared" }

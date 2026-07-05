@@ -23,3 +23,16 @@ pub struct SignedMessage<'a> {
     pub signature: &'a [u8],  // 64 bytes
     pub payload: CommandPayload,
 }
+
+pub mod terminology {
+    // Roles
+    pub const ROLE_SUPERVISOR: &str = "Supervisor";
+    pub const ROLE_ADMIN: &str = "Admin";
+    pub const ROLE_USER: &str = "User";
+    
+    // Commands
+    pub const CMD_COLOR_RED: &str = "COLOR red";
+    pub const CMD_COLOR_YELLOW: &str = "COLOR yellow";
+    pub const CMD_COLOR_GREEN: &str = "COLOR green";
+    pub const CMD_ADD_ROLE: &str = "ADD_ROLE ";
+}

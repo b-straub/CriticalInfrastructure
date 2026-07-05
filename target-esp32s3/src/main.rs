@@ -28,6 +28,7 @@ use smart_leds::{colors, SmartLedsWrite};
 use ws2812_spi::Ws2812;
 use static_cell::StaticCell;
 use serde::{Serialize, Deserialize};
+use shared::terminology::*;
 use embedded_storage::{ReadStorage, Storage};
 use esp_storage::FlashStorage;
 
@@ -388,7 +389,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                             let mut allowed = false;
                                                     let mut color_name = "Unknown";
                                                     
-                                                    if cmd.starts_with("ADD_ROLE ") && is_supervisor {
+                                                    if cmd.starts_with(CMD_ADD_ROLE) && is_supervisor {
                                                         let mut cmd_parts = cmd.split_whitespace();
                                                         cmd_parts.next(); // skip ADD_ROLE
                                                         if let (Some(new_role), Some(new_pk_hex), Some(new_cert_hex)) = (cmd_parts.next(), cmd_parts.next(), cmd_parts.next()) {
@@ -446,14 +447,14 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                         } else {
                                                             response_msg = "Malformed ADD_ROLE command";
                                                         }
-                                                    } else if cmd.starts_with("COLOR green") {
+                                                    } else if cmd.starts_with(CMD_COLOR_GREEN) {
                                                             allowed = true;
                                                             color_name = "Green";
-                                                        } else if cmd.starts_with("COLOR yellow") {
-                                                            if role == "User" || role == "Admin" || is_supervisor { allowed = true; }
+                                                        } else if cmd.starts_with(CMD_COLOR_YELLOW) {
+                                                            if role == ROLE_USER || role == ROLE_ADMIN || is_supervisor { allowed = true; }
                                                             color_name = "Yellow";
-                                                        } else if cmd.starts_with("COLOR red") {
-                                                            if role == "Admin" || is_supervisor { allowed = true; }
+                                                        } else if cmd.starts_with(CMD_COLOR_RED) {
+                                                            if role == ROLE_ADMIN || is_supervisor { allowed = true; }
                                                             color_name = "Red";
                                                     }
                                                     
@@ -469,13 +470,13 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                         let _ = write!(&mut status_str, "{:<6} Pass   ", color_name);
                                                         lcd.write_str_to_cur(&status_str);
                                                         
-                                                        if cmd.starts_with("COLOR red") {
+                                                        if cmd.starts_with(CMD_COLOR_RED) {
                                                             data = [colors::RED; 8];
-                                                        } else if cmd.starts_with("COLOR yellow") {
+                                                        } else if cmd.starts_with(CMD_COLOR_YELLOW) {
                                                             data = [colors::YELLOW; 8];
-                                                        } else if cmd.starts_with("COLOR green") {
+                                                        } else if cmd.starts_with(CMD_COLOR_GREEN) {
                                                             data = [colors::GREEN; 8];
-                                                        } else if cmd.starts_with("ADD_ROLE ") {
+                                                        } else if cmd.starts_with(CMD_ADD_ROLE) {
                                                             data = [colors::BLUE; 8]; // Blue for system actions
                                                         } else {
                                                             data = [colors::WHITE; 8];

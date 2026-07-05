@@ -4,6 +4,7 @@ use js_sys;
 use wasm_bindgen_futures::spawn_local;
 use ed25519_dalek::{SigningKey, Signer};
 use x25519_dalek::{StaticSecret, PublicKey as X25519PublicKey};
+use shared::terminology::*;
 use rand_core::OsRng;
 use hex;
 use gloo_storage::{LocalStorage, Storage};
@@ -142,13 +143,13 @@ impl Component for App {
             }
             Msg::AddRole => {
                 if let Some(seed) = &self.seed {
-                    if self.active_role.as_deref() == Some("Supervisor") {
+                    if self.active_role.as_deref() == Some(ROLE_SUPERVISOR) {
                         let signing_key = ed25519_dalek::SigningKey::from_bytes(seed.as_slice().try_into().unwrap());
                         let cert_msg = format!("ROLE:{};PUBKEY:{}", self.new_role_name, self.new_role_pubkey);
                         use ed25519_dalek::Signer;
                         let cert_sig = signing_key.sign(cert_msg.as_bytes());
                         let cert_sig_hex = hex::encode(cert_sig.to_bytes());
-                        let cmd = format!("ADD_ROLE {} {} {}", self.new_role_name, self.new_role_pubkey, cert_sig_hex);
+                        let cmd = format!("{}{name} {pk} {sig}", CMD_ADD_ROLE, name=self.new_role_name, pk=self.new_role_pubkey, sig=cert_sig_hex);
                         ctx.link().send_message(Msg::SendCommand(cmd));
                     }
                 }
@@ -328,7 +329,7 @@ impl Component for App {
                         </div>
                     </div>
                     
-                    if self.active_role.as_deref() == Some("Supervisor") {
+                    if self.active_role.as_deref() == Some(ROLE_SUPERVISOR) {
                         <div style="background: #1e1e1e; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #444;">
                             <h3 style="margin-top: 0; color: #ffa000;">{ "Supervisor CA Tools" }</h3>
                             <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32. The certificate signature proves you authorized this Role & PubKey pairing." }</p>
@@ -390,13 +391,13 @@ impl Component for App {
                     </div>
                     
                     <h3>{ "System Controls" }</h3>
-                    <button onclick={ctx.link().callback(|_| Msg::SendCommand("COLOR green".to_string()))} style="background: #4caf50; margin-right: 10px;">
+                    <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_GREEN.to_string()))} style="background: #4caf50; margin-right: 10px;">
                         { "System Normal (Green)" }
                     </button>
-                    <button onclick={ctx.link().callback(|_| Msg::SendCommand("COLOR yellow".to_string()))} style="background: #ff9800; margin-right: 10px;">
+                    <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_YELLOW.to_string()))} style="background: #ff9800; margin-right: 10px;">
                         { "Warning (Yellow)" }
                     </button>
-                    <button onclick={ctx.link().callback(|_| Msg::SendCommand("COLOR red".to_string()))} style="background: #f44336; margin-right: 10px;">
+                    <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_RED.to_string()))} style="background: #f44336; margin-right: 10px;">
                         { "Critical Alarm (Red)" }
                     </button>
                     <button onclick={ctx.link().callback(|_| Msg::SendCommand("CLEAR alarm".to_string()))} style="background: #2196f3;">
