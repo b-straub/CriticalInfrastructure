@@ -599,11 +599,16 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                                                         }
                                                     } else if cmd.starts_with(CMD_LIST_ROLES) {
                                                         if role == ROLE_SUPERVISOR {
-                                                            let _ = write!(&mut dynamic_msg, "ROLES:");
-                                                            for r in unsafe { &*core::ptr::addr_of!(ROLES) }.iter() {
-                                                                let mut pk_hex = heapless::String::<64>::new();
-                                                                for b in r.pubkey { let _ = write!(&mut pk_hex, "{:02x}", b); }
-                                                                let _ = write!(&mut dynamic_msg, "{}:{},", r.name, pk_hex);
+                                                            let roles_ref = unsafe { &*core::ptr::addr_of!(ROLES) };
+                                                            if roles_ref.is_empty() {
+                                                                let _ = write!(&mut dynamic_msg, "No roles found");
+                                                            } else {
+                                                                let _ = write!(&mut dynamic_msg, "ROLES:");
+                                                                for r in roles_ref.iter() {
+                                                                    let mut pk_hex = heapless::String::<64>::new();
+                                                                    for b in r.pubkey { let _ = write!(&mut pk_hex, "{:02x}", b); }
+                                                                    let _ = write!(&mut dynamic_msg, "{}:{},", r.name, pk_hex);
+                                                                }
                                                             }
                                                             allowed = true;
                                                             color_name = "System";
