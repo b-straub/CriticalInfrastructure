@@ -5281,6 +5281,7 @@ name = "target-esp32s3"
 version = "0.1.0"
 dependencies = [
  "aes-gcm 0.11.0",
+ "critical-section",
  "ed25519-dalek",
  "embassy-executor",
  "embassy-futures",
