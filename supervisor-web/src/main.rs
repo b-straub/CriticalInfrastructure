@@ -277,7 +277,7 @@ impl Component for App {
                                                         if dec_cipher.decrypt_in_place_detached(resp_nonce, b"", msg, resp_tag).is_ok() {
                                                             if let Ok(plaintext) = core::str::from_utf8(msg) {
                                                                 web_sys::console::log_1(&format!("ESP32 Verified Response: {}", plaintext).into());
-                                                                let error_text = if plaintext.contains("Decryption Failed") || plaintext.contains("tampered") || plaintext.contains("Invalid") {
+                                                                let _error_text = if plaintext.contains("Decryption Failed") || plaintext.contains("tampered") || plaintext.contains("Permission") {
                                                                     Some(plaintext.to_string())
                                                                 } else {
                                                                     None
@@ -338,9 +338,9 @@ impl Component for App {
                         </div>
                     </div>
                     
-                    <div style="margin-top: 20px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                    <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 15px; max-width: 800px;">
                         <div style="display: flex; flex-direction: column;">
-                            <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "ESP32 IP Address:" }</label>
+                            <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 IP Address:" }</label>
                             <input type="text"
                                 value={self.esp32_ip.clone()}
                                 oninput={ctx.link().callback(|e: InputEvent| {
@@ -350,8 +350,8 @@ impl Component for App {
                                 style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; max-width: 300px; box-sizing: border-box; font-size: 16px;"
                             />
                         </div>
-                        <div style="display: flex; flex-direction: column; width: 100%; max-width: 650px;">
-                            <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "ESP32 ROM Pubkey:" }</label>
+                        <div style="display: flex; flex-direction: column; width: 100%;">
+                            <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 ROM Pubkey:" }</label>
                             <input type="text"
                                 value={self.esp32_pubkey.clone()}
                                 oninput={ctx.link().callback(|e: InputEvent| {
@@ -361,8 +361,8 @@ impl Component for App {
                                 style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
                             />
                         </div>
-                        <div style="display: flex; flex-direction: column; width: 100%; max-width: 650px;">
-                            <label style="color: #fff; font-size: 16px; margin-bottom: 5px;">{ "Supervisor Pubkey:" }</label>
+                        <div style="display: flex; flex-direction: column; width: 100%;">
+                            <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "Supervisor Pubkey:" }</label>
                             <input type="text"
                                 value={self.supervisor_pubkey.clone()}
                                 oninput={ctx.link().callback(|e: InputEvent| {
@@ -382,19 +382,23 @@ impl Component for App {
                             <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32. The certificate signature proves you authorized this Role & PubKey pairing." }</p>
                             <div style="display: flex; gap: 10px; align-items: flex-end;">
                                 <div style="display: flex; flex-direction: column;">
-                                    <label style="color: #ccc; font-size: 14px;">{ "New Role Name:" }</label>
-                                    <input type="text"
+                                    <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "New Role Name:" }</label>
+                                    <select
                                         value={self.new_role_name.clone()}
-                                        oninput={ctx.link().callback(|e: InputEvent| {
-                                            let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                            Msg::UpdateNewRoleName(input.value())
+                                        onchange={ctx.link().callback(|e: Event| {
+                                            let select = e.target_unchecked_into::<web_sys::HtmlSelectElement>();
+                                            Msg::UpdateNewRoleName(select.value())
                                         })}
-                                        placeholder="e.g. Guest"
-                                        style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 150px;"
-                                    />
+                                        style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 160px; height: 35px;"
+                                    >
+                                        <option value="" disabled=true selected={self.new_role_name.is_empty()}>{ "Select Role..." }</option>
+                                        <option value={ROLE_ADMIN} selected={self.new_role_name == ROLE_ADMIN}>{ ROLE_ADMIN }</option>
+                                        <option value={ROLE_OPERATOR} selected={self.new_role_name == ROLE_OPERATOR}>{ ROLE_OPERATOR }</option>
+                                        <option value={ROLE_OBSERVER} selected={self.new_role_name == ROLE_OBSERVER}>{ ROLE_OBSERVER }</option>
+                                    </select>
                                 </div>
-                                <div style="display: flex; flex-direction: column;">
-                                    <label style="color: #ccc; font-size: 14px;">{ "New Role Ed25519 PubKey:" }</label>
+                                <div style="display: flex; flex-direction: column; flex-grow: 1;">
+                                    <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "New Role Ed25519 PubKey:" }</label>
                                     <input type="text"
                                         value={self.new_role_pubkey.clone()}
                                         oninput={ctx.link().callback(|e: InputEvent| {
@@ -402,28 +406,30 @@ impl Component for App {
                                             Msg::UpdateNewRolePubkey(input.value())
                                         })}
                                         placeholder="64-char hex string"
-                                        style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 350px;"
+                                        style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; width: 100%; height: 35px; box-sizing: border-box; font-family: monospace;"
                                     />
                                 </div>
-                                <button onclick={ctx.link().callback(|_| Msg::AddRole)} style="background: #ffa000; color: #000; font-weight: bold; padding: 8px 15px; height: 35px;">
+                                <button onclick={ctx.link().callback(|_| Msg::AddRole)} style="background: #ffa000; color: #000; font-weight: bold; padding: 0 20px; height: 35px; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap;">
                                     { "Add Role Securely" }
                                 </button>
                             </div>
                         </div>
                     } else {
                         <h3>{ "System Controls" }</h3>
-                        <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_GREEN.to_string()))} style="background: #4caf50; margin-right: 10px;">
-                            { "System Normal (Green)" }
-                        </button>
-                        <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_YELLOW.to_string()))} style="background: #ff9800; margin-right: 10px;">
-                            { "Warning (Yellow)" }
-                        </button>
-                        <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_RED.to_string()))} style="background: #f44336; margin-right: 10px;">
-                            { "Critical Alarm (Red)" }
-                        </button>
-                        <button onclick={ctx.link().callback(|_| Msg::SendCommand("CLEAR alarm".to_string()))} style="background: #2196f3;">
-                            { "Clear Alarm" }
-                        </button>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
+                            <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_GREEN.to_string()))} style="background: #4caf50; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                { "System Normal (Green)" }
+                            </button>
+                            <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_YELLOW.to_string()))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                { "Warning (Yellow)" }
+                            </button>
+                            <button onclick={ctx.link().callback(|_| Msg::SendCommand(CMD_COLOR_RED.to_string()))} style="background: #f44336; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                { "Critical Alarm (Red)" }
+                            </button>
+                            <button onclick={ctx.link().callback(|_| Msg::SendCommand("CLEAR alarm".to_string()))} style="background: #2196f3; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                { "Clear Alarm" }
+                            </button>
+                        </div>
                     }
                     
                     if let Some(err) = &self.error {
