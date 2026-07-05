@@ -117,7 +117,9 @@ Derive the device identity from a read-protected eFuse key instead of flash stor
 cd target-esp32s3 && cargo build --release --features efuse-hmac-identity
 ```
 
-See [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md).
+See [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md) for the design and the provisioning checklist.
+
+> 🚧 **Coming soon:** a step-by-step eFuse-burning how-to. eFuse writes are **irreversible**, so the procedure is being validated on spare boards first (two backups on the way in case something goes wrong).
 
 ## License
 
