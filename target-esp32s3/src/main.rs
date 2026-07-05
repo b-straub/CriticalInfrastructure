@@ -451,7 +451,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                             allowed = true;
                                                             color_name = "Green";
                                                         } else if cmd.starts_with(CMD_COLOR_YELLOW) {
-                                                            if role == ROLE_USER || role == ROLE_ADMIN || is_supervisor { allowed = true; }
+                                                            if role == ROLE_OPERATOR || role == ROLE_ADMIN || is_supervisor { allowed = true; }
                                                             color_name = "Yellow";
                                                         } else if cmd.starts_with(CMD_COLOR_RED) {
                                                             if role == ROLE_ADMIN || is_supervisor { allowed = true; }

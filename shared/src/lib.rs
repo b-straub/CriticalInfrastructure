@@ -28,7 +28,8 @@ pub mod terminology {
     // Roles
     pub const ROLE_SUPERVISOR: &str = "Supervisor";
     pub const ROLE_ADMIN: &str = "Admin";
-    pub const ROLE_USER: &str = "User";
+    pub const ROLE_OPERATOR: &str = "Operator";
+    pub const ROLE_OBSERVER: &str = "Observer";
     
     // Commands
     pub const CMD_COLOR_RED: &str = "COLOR red";
