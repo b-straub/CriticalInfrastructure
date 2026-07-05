@@ -448,7 +448,7 @@ static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
                                                             response_msg = "Malformed ADD_ROLE command";
                                                         }
                                                     } else if cmd.starts_with(CMD_COLOR_GREEN) {
-                                                            if role == ROLE_OPERATOR || role == ROLE_ADMIN { allowed = true; }
+                                                            if role == ROLE_OBSERVER || role == ROLE_OPERATOR || role == ROLE_ADMIN { allowed = true; }
                                                             color_name = "Green";
                                                         } else if cmd.starts_with(CMD_COLOR_YELLOW) {
                                                             if role == ROLE_OPERATOR || role == ROLE_ADMIN { allowed = true; }
