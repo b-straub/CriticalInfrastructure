@@ -6,6 +6,41 @@ point of read-protection: physical access or a software exploit cannot extract
 the key. This document records what the ESP32-S3 hardware can and cannot do for
 this protocol, and how the firmware realizes the hardware-rooted identity.
 
+## Key & trust model
+
+Three independent trust domains, each anchored in its own hardware — no key is
+ever shared between them:
+
+| Key | Home | Role |
+|-----|------|------|
+| **Supervisor identity** | authenticator — **FIDO2 / WebAuthn-PRF** | derives the Ed25519 key that signs commands and issues role certificates |
+| **Firmware secure-boot** | authenticator — **PIV, RSA-3072** | signs the Secure Boot v2 firmware image; eFuse stores only its public-key digest |
+| **Device identity + flash key** | **ESP32 eFuse** (HMAC-KDF root + XTS-AES) | per-device X25519/Ed25519 seeds and the flash-encryption key; hardware-only, never leaves the chip |
+
+The reference build uses a single **Token2 T2F2 (release 3.3)** authenticator for
+the first two domains: its FIDO2 side backs the supervisor passkey, and its PIV
+applet (NIST SP 800-73-4, RSA-3072-capable) holds the secure-boot signing key.
+`always_uv` is on, so every operation requires user verification. In production
+you would split these onto separate keys (a daily-use identity vs. a rarely-used
+release-signing key); for this demo one device is fine.
+
+### Secure-boot signing (RSA-3072)
+
+ESP32-S3 Secure Boot v2 requires **RSA-3072-PSS** — the S3 has no ECDSA
+secure-boot path, so the signing key *must* be RSA-3072:
+
+- The key lives in a **PIV slot** and never leaves the authenticator. Sign
+  firmware via OpenSC PKCS#11 → `espsecure.py sign_data --hsm …`.
+- **macOS/Linux:** the vendor companion app is still under development, but PIV
+  signing is standards-based — reach the key through OpenSC's generic PKCS#11
+  module. Provision the on-card RSA-3072 key where tooling is easiest (Windows
+  companion app, or `pkcs11-tool` / `piv-tool`), then sign from any OS.
+- **Enroll a backup signer.** Secure Boot v2 trusts up to **three** signing-key
+  digests in eFuse — burn a second key's digest (on a backup authenticator) so a
+  lost key never leaves the device unable to accept signed firmware.
+- A Mac's Secure Enclave can't substitute here: it holds only P-256 EC keys (no
+  RSA), so an RSA-3072 secure-boot key can only live on a PIV/HSM device.
+
 ## What the ESP32-S3 offers for eFuse-bound crypto
 
 | Hardware | eFuse-key bound? | Use here |
