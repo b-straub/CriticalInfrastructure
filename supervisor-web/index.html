@@ -3,20 +3,13 @@
 <head>
     <meta charset="utf-8" />
     <title>Critical Infrastructure - Supervisor</title>
-    <style>
-        body { font-family: system-ui, sans-serif; background: #121212; color: #fff; padding: 20px; }
-        .container { max-width: 800px; margin: 0 auto; background: #1e1e1e; padding: 30px; border-radius: 12px; }
-        button { background: #4caf50; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; margin: 10px 0; }
-        button:hover { background: #45a049; }
-        .output { background: #000; padding: 15px; border-radius: 6px; margin-top: 20px; word-break: break-all; font-family: monospace; }
-        .error { color: #ff5252; margin-top: 20px; }
-    </style>
+    <link data-trunk rel="css" href="style.css" />
     <script>
         window.create_passkey_prf = async function(userId) {
             userId = userId || "supervisor@critical.infra";
             const prfSalt = new TextEncoder().encode("CriticalInfra_Supervisor_Salt_V1");
             const hashBuffer = await crypto.subtle.digest('SHA-256', prfSalt);
-            
+
             if (!navigator.credentials) {
                 if (window.isSecureContext === false) {
                     throw new Error("WebAuthn requires a Secure Context. Serve via localhost.");
@@ -24,9 +17,9 @@
                     throw new Error("navigator.credentials is undefined.");
                 }
             }
-            
+
             const idBytes = new TextEncoder().encode(userId);
-            
+
             const credential = await navigator.credentials.create({
                 publicKey: {
                     challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -46,7 +39,7 @@
             if (!ext.prf || !ext.prf.results || !ext.prf.results.first) {
                 throw new Error("Authenticator does not support WebAuthn PRF");
             }
-            
+
             return {
                 seed: new Uint8Array(ext.prf.results.first),
                 role: userId
@@ -56,7 +49,7 @@
         window.get_passkey_prf = async function() {
             const prfSalt = new TextEncoder().encode("CriticalInfra_Supervisor_Salt_V1");
             const hashBuffer = await crypto.subtle.digest('SHA-256', prfSalt);
-            
+
             if (!navigator.credentials) {
                 if (window.isSecureContext === false) {
                     throw new Error("WebAuthn requires a Secure Context. Serve via localhost.");
@@ -79,7 +72,7 @@
             if (!ext.prf || !ext.prf.results || !ext.prf.results.first) {
                 throw new Error("Authenticator does not support WebAuthn PRF");
             }
-            
+
             // Decode the userId from the stored userHandle (user.id)
             const userHandleBytes = new Uint8Array(assertion.response.userHandle);
             const userId = new TextDecoder().decode(userHandleBytes);
@@ -91,7 +84,5 @@
         };
     </script>
 </head>
-<body>
-    <div id="app"></div>
-</body>
+<body></body>
 </html>
