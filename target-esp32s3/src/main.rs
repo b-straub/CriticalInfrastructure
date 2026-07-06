@@ -20,55 +20,20 @@ use esp_hal::{
     },
     timer::timg::TimerGroup,
 };
-use esp_wifi::wifi::{
-    ClientConfiguration, Configuration, WifiController, WifiDevice, WifiEvent, WifiState,
-};
 use log::info;
 use smart_leds::{colors, SmartLedsWrite};
 use ws2812_spi::Ws2812;
 use static_cell::StaticCell;
-use serde::{Serialize, Deserialize};
 use shared::terminology::*;
 use embedded_storage::{ReadStorage, Storage};
 use esp_storage::FlashStorage;
 
-static mut LAST_TIMESTAMP: u64 = 0;
-
-#[embassy_executor::task]
-async fn connection(mut controller: WifiController<'static>) {
-    info!("wifi connection task starting");
-    loop {
-        if esp_wifi::wifi::wifi_state() == WifiState::StaConnected {
-            controller.wait_for_event(WifiEvent::StaDisconnected).await;
-            Timer::after(Duration::from_millis(5000)).await;
-        }
-        
-        if !matches!(controller.is_started(), Ok(true)) {
-            let client_config = Configuration::Client(ClientConfiguration {
-                ssid: option_env!("WIFI_SSID").unwrap_or("YOUR_SSID").try_into().unwrap(),
-                password: option_env!("WIFI_PASS").unwrap_or("YOUR_PASSWORD").try_into().unwrap(),
-                ..Default::default()
-            });
-            controller.set_configuration(&client_config).unwrap();
-            controller.start_async().await.unwrap();
-            info!("WiFi started");
-        }
-        info!("Connecting...");
-        
-        match controller.connect_async().await {
-            Ok(_) => info!("Wifi connected!"),
-            Err(e) => {
-                info!("Failed to connect to wifi: {:?}", e);
-                Timer::after(Duration::from_millis(5000)).await;
-            }
-        }
-    }
-}
-
-#[embassy_executor::task]
-async fn net_task(mut runner: embassy_net::Runner<'static, WifiDevice<'static>>) {
-    runner.run().await
-}
+mod crypto;
+mod identity;
+mod net;
+mod sensor;
+mod state;
+use crate::state::*;
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -91,118 +56,13 @@ async fn main(spawner: Spawner) {
     let timg1 = TimerGroup::new(peripherals.TIMG1);
     let mut rng = Rng::new(peripherals.RNG);
     
-    // --- Device identity seeds (X25519 for the command envelope, Ed25519 for
-    //     signing responses). Two provisioning paths: ---
-
-    // PRODUCTION: derive both seeds from a read-protected eFuse key via the
-    // hardware HMAC-SHA256 peripheral. The key is read by the HMAC engine
-    // directly from eFuse and is NEVER exposed to software -- that is the entire
-    // point of read-protected eFuse. The S3 has no Curve25519 hardware, so the
-    // derived *seeds* live in RAM and feed software Ed25519/X25519; the root
-    // secret stays hardware-only. Burn a 256-bit HMAC_UP key into eFuse block 0.
+    // Device identity (X25519 for the command envelope, Ed25519 for signing
+    // responses). The two provisioning paths live in `identity.rs`.
     #[cfg(feature = "efuse-hmac-identity")]
-    let (x25519_seed, ed25519_seed) = {
-        use esp_hal::hmac::{Hmac, HmacPurpose, KeyId};
-        info!("Deriving device identity from read-protected eFuse HMAC key (hardware-only root).");
-        // The HMAC core is driven by the SHA core; hold the SHA peripheral so
-        // its clock stays enabled for the duration of the derivation.
-        let _sha_clock = esp_hal::sha::Sha::new(peripherals.SHA);
-        let mut hmac = Hmac::new(peripherals.HMAC);
-        fn kdf(hmac: &mut Hmac, label: &[u8]) -> [u8; 32] {
-            hmac.init();
-            if hmac.configure(HmacPurpose::ToUser, KeyId::Key0).is_err() {
-                // No fallback: a production build with no provisioned eFuse key
-                // must fail loudly rather than silently derive a software key.
-                panic!("eFuse HMAC key (block 0, purpose HMAC_UP) not provisioned");
-            }
-            let mut rem: &[u8] = label;
-            while !rem.is_empty() {
-                if let Ok(r) = hmac.update(rem) {
-                    rem = r;
-                }
-            }
-            let mut out = [0u8; 32];
-            while hmac.finalize(&mut out).is_err() {}
-            out
-        }
-        let x = kdf(&mut hmac, b"esp-x25519-identity-v1");
-        let e = kdf(&mut hmac, b"esp-ed25519-signing-v1");
-        (x, e)
-    };
-
-    // DEV/PROVISIONING (default): seed from flash, or generate + persist to
-    // PLAIN flash on first boot. This is the branch that is not production safe;
-    // it shouts about it so a plain-flash key never ships unnoticed.
+    let (esp_x25519_secret, esp_signing_key) =
+        identity::derive_identity(peripherals.SHA, peripherals.HMAC);
     #[cfg(not(feature = "efuse-hmac-identity"))]
-    let (x25519_seed, ed25519_seed) = {
-        let mut flash = FlashStorage::new();
-        let mut seed_buf = [0u8; 4096];
-        let mut esp_seed = [0u8; 32];
-        let mut has_seed = false;
-
-        if flash.read(0x210000, &mut seed_buf).is_ok() {
-            let is_empty = seed_buf[0..32].iter().all(|&b| b == 0xFF || b == 0x00);
-            if !is_empty {
-                esp_seed.copy_from_slice(&seed_buf[0..32]);
-                has_seed = true;
-            }
-        }
-
-        if !has_seed {
-            for chunk in esp_seed.chunks_mut(4) {
-                let rand_val = rng.random();
-                chunk.copy_from_slice(&rand_val.to_le_bytes());
-            }
-            let mut write_buf = [0u8; 4096];
-            write_buf[0..32].copy_from_slice(&esp_seed);
-            let _ = flash.write(0x210000, &write_buf);
-
-            log::error!("");
-            log::error!("\x1b[1;97;41m ================================================================ \x1b[0m");
-            log::error!("\x1b[1;97;41m  !!  NOT PRODUCTION SAFE  --  STATIC KEY STORED IN PLAIN FLASH  !! \x1b[0m");
-            log::error!("\x1b[1;97;41m ================================================================ \x1b[0m");
-            log::error!("\x1b[1;91m  The long-term X25519 ROM secret was written UNENCRYPTED to flash\x1b[0m");
-            log::error!("\x1b[1;91m  at 0x210000. Anyone with physical access can read or replace it.\x1b[0m");
-            log::error!("\x1b[1;91m  Build with --features efuse-hmac-identity and burn an eFuse HMAC\x1b[0m");
-            log::error!("\x1b[1;91m  key for production (docs/formal/EFUSE-HARDENING.md).\x1b[0m");
-            log::error!("\x1b[1;97;41m ================================================================ \x1b[0m");
-            log::error!("");
-        }
-
-        // Domain-separate the Ed25519 signing seed from the X25519 seed.
-        let ed25519_seed = {
-            use sha2::Digest as _;
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(esp_seed);
-            hasher.update(b"esp-ed25519-signing-v1");
-            let digest = hasher.finalize();
-            let mut s = [0u8; 32];
-            s.copy_from_slice(&digest);
-            s
-        };
-        (esp_seed, ed25519_seed)
-    };
-
-    let esp_x25519_secret = x25519_dalek::StaticSecret::from(x25519_seed);
-
-    // Ed25519 response-signing identity. Every response is signed with this key
-    // so the WebApp can prove it genuinely came from THIS device. Provision the
-    // printed public key into the WebApp "Sig Pubkey" field.
-    let esp_signing_key = ed25519_dalek::SigningKey::from_bytes(&ed25519_seed);
-    {
-        use core::fmt::Write as _;
-        let mut esp_sig_pub_hex = heapless::String::<64>::new();
-        for b in esp_signing_key.verifying_key().to_bytes() {
-            let _ = write!(&mut esp_sig_pub_hex, "{:02x}", b);
-        }
-        info!("ESP32 Ed25519 Response-Signing PubKey: {}", esp_sig_pub_hex);
-    }
-    let esp_x25519_pub = x25519_dalek::PublicKey::from(&esp_x25519_secret);
-    
-    let mut hex_x25519 = heapless::String::<64>::new();
-    use core::fmt::Write;
-    for b in esp_x25519_pub.as_bytes() { let _ = write!(&mut hex_x25519, "{:02x}", b); }
-    info!("ESP32 X25519 PubKey: {}", hex_x25519);
+    let (esp_x25519_secret, esp_signing_key) = identity::derive_identity(&mut rng);
     
     // We can still pass rng to esp_wifi because we didn't consume it
     let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
@@ -266,27 +126,11 @@ async fn main(spawner: Spawner) {
         1234, // Random seed
     );
 
-    spawner.spawn(connection(_controller)).unwrap();
-    spawner.spawn(net_task(runner)).unwrap();
+    spawner.spawn(net::connection(_controller)).unwrap();
+    spawner.spawn(net::net_task(runner)).unwrap();
 
     // TCP Server Loop
     let mut rx_buffer = [0; 4096];
-    
-#[derive(Clone, Serialize, Deserialize)]
-struct RoleEntry {
-    name: heapless::String<16>,
-    pubkey: [u8; 32],
-    cert_sig: heapless::Vec<u8, 64>,
-}
-static mut ROLES: heapless::Vec<RoleEntry, 10> = heapless::Vec::new();
-
-static mut LAST_TEMP: f32 = 0.0;
-static mut LAST_RH: f32 = 0.0;
-static mut THRESHOLD: f32 = 25.0; // Default threshold
-static mut ALARM_ACTIVE: bool = false;
-static mut COMMAND_OVERRIDE_UNTIL: u64 = 0; // ms
-static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
-
     let mut tx_buffer = [0; 4096];
     
     let mut flash = FlashStorage::new();
@@ -362,67 +206,12 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                     if now_ms - last_dht_read > 2000 {
                         last_dht_read = now_ms;
                         // Read DHT11 and update display!
-            let mut temp = 24.5;
-            let mut hum = 45.0;
-            
-            let dht_delay = esp_hal::delay::Delay::new();
-            dht_pin.set_output_enable(true);
-            dht_pin.set_low();
-            dht_delay.delay_millis(20);
-            // Let the external pull-up pull the line HIGH! Don't drive it HIGH actively.
-            dht_pin.set_output_enable(false);
-            dht_pin.set_input_enable(true);
-            
-            let mut success = true;
-            let mut data = [0u8; 5];
-            
-            critical_section::with(|_| {
-                macro_rules! wait_pulse {
-                    ($state:expr) => {{
-                        let start = embassy_time::Instant::now();
-                        let mut res = None;
-                        while start.elapsed().as_micros() < 200 {
-                            if dht_pin.is_high() != $state {
-                                res = Some(start.elapsed().as_micros());
-                                break;
-                            }
-                        }
-                        res
-                    }};
-                }
-
-                if wait_pulse!(true).is_none() { success = false; }
-                if wait_pulse!(false).is_none() { success = false; }
-                if wait_pulse!(true).is_none() { success = false; }
-                
-                if success {
-                    for i in 0..40 {
-                        if wait_pulse!(false).is_none() { success = false; break; }
-                        if let Some(len) = wait_pulse!(true) {
-                            if len > 40 {
-                                data[i / 8] |= 1 << (7 - (i % 8));
-                            }
-                        } else {
-                            success = false; break;
-                        }
-                    }
-                }
-            });
-            
-            if success {
-                let checksum = data[0].wrapping_add(data[1]).wrapping_add(data[2]).wrapping_add(data[3]);
-                if checksum == data[4] && (data[0] > 0 || data[2] > 0) {
-                    hum = data[0] as f32 + (data[1] as f32 / 10.0);
-                    temp = data[2] as f32 + (data[3] as f32 / 10.0);
-                } else {
-                    success = false;
-                }
-            }
+            let reading = sensor::read_dht11(&mut dht_pin);
 
             lcd.set_cursor_pos((0, 1));
             let mut status_str = heapless::String::<16>::new();
             use core::fmt::Write;
-            if success {
+            if let Some((temp, hum)) = reading {
                 let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
                 unsafe {
                     LAST_TEMP = temp;
@@ -843,95 +632,24 @@ static mut COMMAND_OVERRIDE_COLOR: [smart_leds::RGB8; 8] = [colors::BLACK; 8];
                         }
                     }
                     
-                    // Build, SIGN, then encrypt the response. The Ed25519 signature
-                    // (verified by the WebApp against the ESP's provisioned pubkey) is
-                    // what makes the response unforgeable; the AES-GCM tag alone only
-                    // proves knowledge of a key an active MITM can also derive.
-                    let mut final_response = heapless::String::<2560>::new();
-                    use core::fmt::Write;
-
+                    // Build, sign, and encrypt the response (see crypto.rs).
                     let mut resp_message = heapless::String::<512>::new();
-                    if !dynamic_msg.is_empty() {
-                        let _ = write!(&mut resp_message, "{}", dynamic_msg);
-                    } else {
-                        let _ = write!(&mut resp_message, "{}", response_msg);
-                    }
-
-                    // Sign "resp|<ts>|<message>": binds the response to this request
-                    // and proves it originated from this device's signing key.
-                    let mut resp_signed = heapless::String::<560>::new();
-                    let _ = write!(&mut resp_signed, "resp|{}|{}", resp_ts, resp_message);
-                    use ed25519_dalek::Signer as _;
-                    let resp_signature = esp_signing_key.sign(resp_signed.as_bytes());
-                    let mut resp_sig_hex = heapless::String::<128>::new();
-                    for b in resp_signature.to_bytes() {
-                        let _ = write!(&mut resp_sig_hex, "{:02x}", b);
-                    }
-
-                    // Inner plaintext that gets AES-GCM encrypted below: ts;message;sig
-                    let mut plaintext = heapless::String::<768>::new();
-                    let _ = write!(&mut plaintext, "{};{};{}", resp_ts, resp_message, resp_sig_hex);
-                    
-                    #[allow(deprecated)]
-                    use aes_gcm::{Aes256Gcm, Key, Nonce};
-                    #[allow(deprecated)]
-                    use aes_gcm::aead::{AeadInPlace, KeyInit};
-                    
-                    // ESP32 generates a fresh ephemeral X25519 keypair for the response.
-                    // The seed MUST come from the hardware TRNG. Deriving it from a timer
-                    // makes the private key low-entropy and reconstructable from the public
-                    // IV, and reusing a timer value across two responses reuses the AES-GCM
-                    // (key, nonce) pair. The RNG peripheral is a true RNG here because the
-                    // Wi-Fi radio is enabled.
-                    let mut resp_ephemeral_seed = [0u8; 32];
-                    rng.read(&mut resp_ephemeral_seed);
-                    let resp_ephemeral_secret = x25519_dalek::StaticSecret::from(resp_ephemeral_seed);
-                    let resp_ephemeral_pub = x25519_dalek::PublicKey::from(&resp_ephemeral_secret);
-
-                    // DH against the client's request ephemeral pubkey yields a fresh
-                    // per-response shared secret.
-                    let ephemeral_pub = x25519_dalek::PublicKey::from(ephemeral_pub_bytes);
-                    let resp_shared_secret = resp_ephemeral_secret.diffie_hellman(&ephemeral_pub);
-                    use sha2::Digest;
-                    let tx_key_hash = sha2::Sha256::digest(resp_shared_secret.as_bytes());
-
-                    #[allow(deprecated)]
-                    let key = Key::<Aes256Gcm>::from_slice(&tx_key_hash);
-                    let cipher = Aes256Gcm::new(key);
-
-                    // Fresh random 96-bit GCM nonce from the TRNG.
-                    let mut iv = [0u8; 12];
-                    rng.read(&mut iv);
-                    #[allow(deprecated)]
-                    let nonce = Nonce::from_slice(&iv);
-                    
-                    let mut ciphertext = heapless::Vec::<u8, 1024>::new();
-                    let _ = ciphertext.extend_from_slice(plaintext.as_bytes());
-                    
-                    #[allow(deprecated)]
-                    if let Ok(tag) = cipher.encrypt_in_place_detached(nonce, b"", &mut ciphertext) {
-                        let _ = ciphertext.extend_from_slice(&tag);
-                        
-                        let mut iv_hex_out = heapless::String::<24>::new();
-                        for b in iv {
-                            let _ = write!(&mut iv_hex_out, "{:02x}", b);
+                    {
+                        use core::fmt::Write as _;
+                        if !dynamic_msg.is_empty() {
+                            let _ = write!(&mut resp_message, "{}", dynamic_msg);
+                        } else {
+                            let _ = write!(&mut resp_message, "{}", response_msg);
                         }
-                        
-                        let mut cipher_hex_out = heapless::String::<2048>::new();
-                        for b in ciphertext.as_slice() {
-                            let _ = write!(&mut cipher_hex_out, "{:02x}", b);
-                        }
-                        
-                        let mut resp_eph_pub_hex = heapless::String::<64>::new();
-                        for b in resp_ephemeral_pub.as_bytes() {
-                            let _ = write!(&mut resp_eph_pub_hex, "{:02x}", b);
-                        }
-                        
-                        let _ = write!(&mut final_response, "{};{};{}", resp_eph_pub_hex, iv_hex_out, cipher_hex_out);
-                    } else {
-                        let _ = write!(&mut final_response, "Encryption Error");
                     }
-                    
+                    let final_response = crypto::build_signed_response(
+                        &resp_ts,
+                        &resp_message,
+                        &esp_signing_key,
+                        &ephemeral_pub_bytes,
+                        &mut rng,
+                    );
+
                     let _ = socket.write(final_response.as_bytes()).await;
                     let _ = socket.flush().await;
                     socket.close();
