@@ -14,14 +14,9 @@
 __pycache__/
 *.pyc
 
-# ESP-IDF Bootloader Build Directory
-/bootloader-build/build/
-/bootloader-build/sdkconfig
-/bootloader-build/dependencies.lock
-/bootloader-build/managed_components/
-
 # MacOS
 .DS_Store
+**/.DS_Store
 proxy.log
 supervisor-web/dist
 
