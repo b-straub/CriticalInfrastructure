@@ -109,6 +109,25 @@ Served on `http://localhost` (a WebAuthn secure context, so no HTTPS needed) and
 | ESP32 Sig Pubkey | the **Ed25519 Response-Signing** key from the boot log |
 | Supervisor Pubkey | your supervisor public key |
 
+### Hosting: local vs. remote
+
+The dashboard is a **static WASM bundle** (`trunk build` → `dist/`) that talks to the device over HTTP. Two browser rules decide where you can host it:
+
+- **WebAuthn needs a secure context** — satisfied by `https://` **or** `http://localhost`.
+- **A page can only reach its own security level** — an `https://` page may not call a plaintext `http://` device (mixed content). Browser code also can't open a raw TCP socket at all, which is why the firmware serves HTTP rather than a bare socket. The command envelope is end-to-end encrypted and signed (X25519 + AES-GCM + Ed25519), so plaintext HTTP transport leaks nothing and can't be forged — **no TLS to the device is required**.
+
+**Local (recommended — zero infrastructure).** `./run_dashboard.sh` serves the bundle from `http://localhost`. That's a secure context (WebAuthn works) *and* an http origin (so it may `fetch("http://<device>:8080/")` directly). Enter the device's LAN IP — done. No proxy, no HTTPS, no certificate.
+
+**Remote / off-LAN.** As soon as the app is served over HTTPS (a public host, GitHub Pages, …), the browser forbids it from calling a plaintext device — so the *device* needs an HTTPS front (a tunnel or reverse proxy; impractical to run on the ESP itself). Separately, whatever hosts that front must have a network route to the device — the browser is never the one connecting to it.
+
+| App served at | WebAuthn | Reach the device by |
+|---|---|---|
+| `http://localhost` (this repo's default) | ✅ localhost is a secure context | its **LAN IP** directly — no proxy |
+| `http://<lan-ip>` (another LAN box) | ❌ not a secure context | works, but WebAuthn needs a local cert |
+| `https://…` (remote / GitHub Pages) | ✅ | an **`https://` front** for the device (tunnel / reverse proxy) |
+
+Reachability for the remote case is pure networking — a VPN into the device's network, or a routable public IP / DynDNS + port-forward (carrier LTE is usually CGNAT, so an outbound tunnel like Cloudflare/Tailscale is the robust option). The app itself never changes; it just points at wherever the device is reachable.
+
 ### Production hardening (optional)
 
 Derive the device identity from a read-protected eFuse key instead of flash storage:
