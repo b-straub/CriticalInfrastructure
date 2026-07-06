@@ -232,7 +232,9 @@ impl AppState {
             let (payload, ephemeral_secret) =
                 crypto::encrypt_command(seed.as_slice(), &cmd, &esp_pub_bytes, timestamp);
 
-            let url = format!("http://localhost:8000/proxy.php?ip={}", ip);
+            // Same-origin: the proxy is served next to the app in prod, and via
+            // a Trunk [[proxy]] in dev. Avoids CORS and HTTPS mixed-content.
+            let url = format!("/proxy.php?ip={}", ip);
             let opts = web_sys::RequestInit::new();
             opts.set_method("POST");
             opts.set_mode(web_sys::RequestMode::Cors);

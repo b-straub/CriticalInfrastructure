@@ -1,0 +1,18 @@
+# Deploy-time Apache config for the built dashboard (copied into dist/ by Trunk).
+# Requires the vhost to allow it: AllowOverride FileInfo Indexes (or All).
+
+# REQUIRED: browsers stream-compile the wasm; the wrong MIME type fails the load.
+AddType application/wasm .wasm
+
+# Trunk fingerprints asset filenames, so cache them hard. index.html is NOT
+# matched here — it must revalidate so new builds are picked up.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(wasm|js|css)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# wasm/js/css compress ~3-4x on the wire.
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE application/wasm application/javascript text/css text/html
+</IfModule>

@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>Critical Infrastructure - Supervisor</title>
     <link data-trunk rel="css" href="style.css" />
+    <link data-trunk rel="copy-file" href=".htaccess" />
     <script>
         window.create_passkey_prf = async function(userId) {
             userId = userId || "supervisor@critical.infra";
@@ -12,7 +13,7 @@
 
             if (!navigator.credentials) {
                 if (window.isSecureContext === false) {
-                    throw new Error("WebAuthn requires a Secure Context. Serve via localhost.");
+                    throw new Error("WebAuthn requires a Secure Context — serve over HTTPS (or use localhost).");
                 } else {
                     throw new Error("navigator.credentials is undefined.");
                 }
@@ -23,7 +24,10 @@
             const credential = await navigator.credentials.create({
                 publicKey: {
                     challenge: crypto.getRandomValues(new Uint8Array(32)),
-                    rp: { name: "Critical Infrastructure", id: "localhost" },
+                    // rp.id defaults to the serving domain, so the same build works on
+                    // localhost and on your deployed host. Set a parent domain here only
+                    // if you need the passkey shared across subdomains.
+                    rp: { name: "Critical Infrastructure", id: window.location.hostname },
                     user: {
                         id: idBytes,
                         name: userId,
@@ -52,7 +56,7 @@
 
             if (!navigator.credentials) {
                 if (window.isSecureContext === false) {
-                    throw new Error("WebAuthn requires a Secure Context. Serve via localhost.");
+                    throw new Error("WebAuthn requires a Secure Context — serve over HTTPS (or use localhost).");
                 } else {
                     throw new Error("navigator.credentials is undefined.");
                 }
@@ -61,7 +65,7 @@
             const assertion = await navigator.credentials.get({
                 publicKey: {
                     challenge: crypto.getRandomValues(new Uint8Array(32)),
-                    rpId: "localhost",
+                    rpId: window.location.hostname,
                     userVerification: "required",
                     extensions: { prf: { eval: { first: hashBuffer } } }
                 }
