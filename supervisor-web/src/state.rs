@@ -228,51 +228,67 @@ impl AppState {
 
         let window = web_sys::window().unwrap();
         spawn_local(async move {
-            let timestamp = js_sys::Date::now() as u64;
-            let (payload, ephemeral_secret) =
-                crypto::encrypt_command(seed.as_slice(), &cmd, &esp_pub_bytes, timestamp);
+            // The single-connection device occasionally drops a request mid-flight
+            // ("network connection interrupted"). Retry transient failures silently
+            // a few times. Each attempt re-signs with a fresh timestamp, so a retry
+            // is a legitimate new command (monotonic), never a replay.
+            const MAX_ATTEMPTS: u32 = 4;
+            const RETRY_DELAY_MS: u32 = 300;
 
-            // Talk to the device's HTTP endpoint directly (no proxy). The user
-            // enters the host in the IP box; the firmware serves on :8080. Works
-            // from an http://localhost origin (WebAuthn secure context) with no
-            // mixed-content wall; the envelope is E2E-encrypted so plain HTTP is fine.
-            let url = format!("http://{}:8080/", ip);
-            let opts = web_sys::RequestInit::new();
-            opts.set_method("POST");
-            opts.set_mode(web_sys::RequestMode::Cors);
-            opts.set_body(&JsValue::from_str(&payload));
-            let request = web_sys::Request::new_with_str_and_init(&url, &opts).unwrap();
+            let mut attempt = 0u32;
+            loop {
+                attempt += 1;
+                let timestamp = js_sys::Date::now() as u64;
+                let (payload, ephemeral_secret) =
+                    crypto::encrypt_command(seed.as_slice(), &cmd, &esp_pub_bytes, timestamp);
 
-            match wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request)).await {
-                Ok(resp_value) => {
-                    use wasm_bindgen::JsCast;
-                    if let Ok(resp) = resp_value.dyn_into::<web_sys::Response>() {
-                        if resp.ok() {
-                            match wasm_bindgen_futures::JsFuture::from(resp.text().unwrap()).await {
-                                Ok(text_val) => {
+                // The device serves HTTP on :8080. From an http://localhost origin
+                // there is no mixed-content wall, and the envelope is E2E-encrypted
+                // so plain HTTP transport is fine.
+                let url = format!("http://{}:8080/", ip);
+                let opts = web_sys::RequestInit::new();
+                opts.set_method("POST");
+                opts.set_mode(web_sys::RequestMode::Cors);
+                opts.set_body(&JsValue::from_str(&payload));
+                let request = web_sys::Request::new_with_str_and_init(&url, &opts).unwrap();
+
+                match wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request)).await {
+                    Ok(resp_value) => {
+                        use wasm_bindgen::JsCast;
+                        if let Ok(resp) = resp_value.dyn_into::<web_sys::Response>() {
+                            if resp.ok() {
+                                if let Ok(text_val) =
+                                    wasm_bindgen_futures::JsFuture::from(resp.text().unwrap()).await
+                                {
                                     if let Some(text) = text_val.as_string() {
                                         match crypto::verify_response(&text, &ephemeral_secret, &sig_pub_hex, timestamp) {
                                             Ok(msg) => self.handle_response(msg),
                                             Err(e) => self.handle_response(e),
                                         }
+                                        break;
                                     }
                                 }
-                                Err(_) => web_sys::console::log_1(
-                                    &"Command sent successfully, but couldn't read response body.".into(),
-                                ),
+                                // Reached the device but couldn't read the body — retry.
+                            } else {
+                                self.handle_response(format!(
+                                    "Device returned HTTP {}. Check the IP and that it is reachable, then retry.",
+                                    resp.status()
+                                ));
+                                break;
                             }
-                        } else {
-                            self.handle_response(format!(
-                                "Connection error: proxy returned HTTP {}. Check the device IP and that it is reachable, then retry.",
-                                resp.status()
-                            ));
                         }
                     }
+                    Err(_) => { /* transient network drop — fall through to retry */ }
                 }
-                Err(e) => self.handle_response(format!(
-                    "Connection error: could not reach the proxy ({:?}). Check the proxy and device IP, then retry.",
-                    e
-                )),
+
+                if attempt >= MAX_ATTEMPTS {
+                    self.handle_response(
+                        "Could not reach the device (network interrupted). Check the IP and that it is reachable, then retry."
+                            .to_string(),
+                    );
+                    break;
+                }
+                gloo_timers::future::TimeoutFuture::new(RETRY_DELAY_MS).await;
             }
         });
 
