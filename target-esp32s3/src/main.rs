@@ -186,57 +186,66 @@ async fn main(spawner: Spawner) {
         
         info!("HTTP listening on :8080...");
         
-        let connected = loop {
-            match embassy_time::with_timeout(embassy_time::Duration::from_millis(250), socket.accept(8080)).await {
-                Ok(Err(e)) => {
-                    info!("Accept error: {:?}", e);
-                    break false;
-                }
-                Ok(Ok(())) => {
-                    break true;
-                }
-                Err(_) => {
-                    // Socket timeout - Idle mode (runs every 250ms)
-                    let now_ms = embassy_time::Instant::now().as_millis();
-                    if now_ms - last_dht_read > 2000 {
-                        last_dht_read = now_ms;
-                        // Read DHT11 and update display!
-            let reading = sensor::read_dht11(&mut dht_pin);
-
-            lcd.set_cursor_pos((0, 1));
-            let mut status_str = heapless::String::<16>::new();
-            use core::fmt::Write;
-            if let Some((temp, hum)) = reading {
-                let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
-                unsafe {
-                    LAST_TEMP = temp;
-                    LAST_RH = hum;
-                    if temp > THRESHOLD {
-                        ALARM_ACTIVE = true;
+        // Keep the accept future ALIVE across idle ticks (pinned + select) so the
+        // socket never stops listening. with_timeout(accept) used to drop and
+        // re-arm accept every 250ms, and a browser SYN that landed in one of those
+        // gaps was dropped ("network connection interrupted"). Now the task stays
+        // parked in accept() and the idle sensor/LED runs on the timer branch.
+        let connected = {
+            let mut accept = core::pin::pin!(socket.accept(8080));
+            loop {
+                use embassy_futures::select::{select, Either};
+                match select(
+                    accept.as_mut(),
+                    embassy_time::Timer::after(embassy_time::Duration::from_millis(250)),
+                )
+                .await
+                {
+                    Either::First(Ok(())) => break true,
+                    Either::First(Err(e)) => {
+                        info!("Accept error: {:?}", e);
+                        break false;
                     }
-                }
-            } else {
-                let _ = write!(&mut status_str, "Sensor Error    ");
-            }
-            lcd.write_str_to_cur(&status_str);
+                    Either::Second(_) => {
+                        // Idle tick (~250ms); the accept future stays alive.
+                        let now_ms = embassy_time::Instant::now().as_millis();
+                        if now_ms - last_dht_read > 2000 {
+                            last_dht_read = now_ms;
+                            let reading = sensor::read_dht11(&mut dht_pin);
+                            lcd.set_cursor_pos((0, 1));
+                            let mut status_str = heapless::String::<16>::new();
+                            use core::fmt::Write;
+                            if let Some((temp, hum)) = reading {
+                                let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
+                                unsafe {
+                                    LAST_TEMP = temp;
+                                    LAST_RH = hum;
+                                    if temp > THRESHOLD {
+                                        ALARM_ACTIVE = true;
+                                    }
+                                }
+                            } else {
+                                let _ = write!(&mut status_str, "Sensor Error    ");
+                            }
+                            lcd.write_str_to_cur(&status_str);
+                        }
 
-            } // End of 2-second DHT11 read block
-
-            unsafe {
-                let now = embassy_time::Instant::now().as_millis();
-                if now < COMMAND_OVERRIDE_UNTIL {
-                    let color_copy = COMMAND_OVERRIDE_COLOR;
-                    ws2812.write(color_copy.iter().cloned()).unwrap();
-                } else if ALARM_ACTIVE {
-                    if (now / 250) % 2 == 0 {
-                        ws2812.write([colors::RED; 8].iter().cloned()).unwrap();
-                    } else {
-                        ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                        unsafe {
+                            let now = embassy_time::Instant::now().as_millis();
+                            if now < COMMAND_OVERRIDE_UNTIL {
+                                let color_copy = COMMAND_OVERRIDE_COLOR;
+                                ws2812.write(color_copy.iter().cloned()).unwrap();
+                            } else if ALARM_ACTIVE {
+                                if (now / 250) % 2 == 0 {
+                                    ws2812.write([colors::RED; 8].iter().cloned()).unwrap();
+                                } else {
+                                    ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                                }
+                            } else {
+                                ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                            }
+                        }
                     }
-                } else {
-                    ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
-                }
-            }
                 }
             }
         };
