@@ -6,6 +6,17 @@
     <link data-trunk rel="css" href="style.css" />
     <link data-trunk rel="copy-file" href=".htaccess" />
     <script>
+        // WebAuthn scopes passkeys to the exact hostname. Normalize loopback
+        // aliases to `localhost` (where the passkey is registered) so 127.0.0.1 /
+        // ::1 / localhost. don't silently become a different WebAuthn origin.
+        (function () {
+            var h = location.hostname;
+            if (h !== "localhost" && (h === "127.0.0.1" || h === "::1" || h === "[::1]" || h === "localhost.")) {
+                var port = location.port ? ":" + location.port : "";
+                location.replace(location.protocol + "//localhost" + port + location.pathname + location.search + location.hash);
+            }
+        })();
+
         window.create_passkey_prf = async function(userId) {
             userId = userId || "supervisor@critical.infra";
             const prfSalt = new TextEncoder().encode("CriticalInfra_Supervisor_Salt_V1");
