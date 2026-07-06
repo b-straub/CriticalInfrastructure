@@ -62,11 +62,16 @@ fn dashboard(state: AppState) -> impl IntoView {
                     {move || state.pubkey_hex.get().unwrap_or_default()}
                 </div>
             </div>
-            <button class="btn-logout" on:click=move |_| state.logout()>{ "Logout" }</button>
+            <div class="auth-actions">
+                <button class="btn-config" on:click=move |_| state.show_config.update(|v| *v = !*v)>
+                    { "\u{2699} Connection" }
+                </button>
+                <button class="btn-logout" on:click=move |_| state.logout()>{ "Logout" }</button>
+            </div>
         </div>
 
         {move || {
-            (!state.is_fetching_role.get() && (state.is_local_supervisor() || state.config_needs_setup()))
+            (state.config_needs_setup() || state.show_config.get())
                 .then(|| connection_config(state))
         }}
 
@@ -80,7 +85,7 @@ fn dashboard(state: AppState) -> impl IntoView {
                         <div class="notice">
                             <strong class="notice-title">{ "Cannot verify the device" }</strong>
                             <p class="notice-body">
-                                { "The connection is configured, but the device could not be reached or its response could not be verified. Trust anchors are managed by the supervisor \u{2014} please clarify the connection details with your supervisor." }
+                                { "The connection is configured, but the device could not be reached or its response could not be verified. Use the \u{2699} Connection button above to check the IP and keys \u{2014} or clarify with your supervisor." }
                             </p>
                         </div>
                     }
@@ -185,6 +190,13 @@ fn connection_config(state: AppState) -> impl IntoView {
                     on:input=move |ev| state.set_supervisor_pubkey(event_target_value(&ev))
                 />
             </div>
+            <button
+                class="btn-connect"
+                disabled=move || state.esp32_ip.get().trim().is_empty()
+                on:click=move |_| state.send_command(CMD_WHOAMI.to_string())
+            >
+                { "Connect / Fetch Role" }
+            </button>
         </div>
     }
 }

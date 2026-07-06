@@ -38,6 +38,9 @@ pub struct AppState {
     pub is_fetching_role: RwSignal<bool>,
     pub parsed_roles: RwSignal<Option<Vec<(String, String)>>>,
     pub command_color: RwSignal<Option<String>>,
+    /// Whether the connection-config panel is open (user toggle, and auto-opened
+    /// on a failed connect so the IP + keys can always be fixed).
+    pub show_config: RwSignal<bool>,
     /// Generation counters: bumping one invalidates any in-flight timeout, which
     /// gives us a sliding window without holding a (non-Send) Timeout handle.
     seed_gen: RwSignal<u32>,
@@ -63,6 +66,7 @@ impl AppState {
             is_fetching_role: RwSignal::new(false),
             parsed_roles: RwSignal::new(None),
             command_color: RwSignal::new(None),
+            show_config: RwSignal::new(false),
             seed_gen: RwSignal::new(0),
             color_gen: RwSignal::new(0),
         }
@@ -282,8 +286,11 @@ impl AppState {
                 }
 
                 if attempt >= MAX_ATTEMPTS {
+                    // Open the connection panel so the IP / keys can be fixed even
+                    // if this was a WHOAMI on login (e.g. the device IP changed).
+                    self.show_config.set(true);
                     self.handle_response(
-                        "Could not reach the device (network interrupted). Check the IP and that it is reachable, then retry."
+                        "Could not reach the device. Open the connection settings, fix the IP / keys, then Connect."
                             .to_string(),
                     );
                     break;

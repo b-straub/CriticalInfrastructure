@@ -127,6 +127,24 @@ button {
     margin: 0;
 }
 
+.auth-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.btn-config {
+    background: #455a64;
+    color: white;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 16px;
+    margin: 0;
+}
+
 /* ---- connection config panel ---- */
 .config-panel {
     margin-top: 20px;
@@ -143,6 +161,25 @@ button {
 .config-title {
     margin: 0;
     color: #888;
+}
+
+.btn-connect {
+    align-self: flex-start;
+    background: #00897b;
+    color: white;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 16px;
+    margin: 0;
+}
+
+.btn-connect:disabled {
+    background: #555;
+    color: #888;
+    cursor: not-allowed;
 }
 
 .field-col {
