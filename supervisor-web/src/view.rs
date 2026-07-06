@@ -75,57 +75,7 @@ pub fn render(app: &App, ctx: &Context<App>) -> Html {
                     </div>
                     
                     if !app.is_fetching_role && (app.is_local_supervisor() || app.config_needs_setup()) {
-                        <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 15px; max-width: 800px; padding: 15px; background: #1e1e1e; border: 1px dashed #555; border-radius: 6px;">
-                            <h4 style="margin: 0; color: #888;">{ "Connection Configuration" }</h4>
-                            <div style="display: flex; flex-direction: column;">
-                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 IP Address:" }</label>
-                                <input type="text"
-                                    placeholder="device IP address"
-                                    value={app.esp32_ip.clone()}
-                                    oninput={ctx.link().callback(|e: InputEvent| {
-                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                        Msg::UpdateIp(input.value())
-                                    })}
-                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; max-width: 300px; box-sizing: border-box; font-size: 16px;"
-                                />
-                            </div>
-                            <div style="display: flex; flex-direction: column; width: 100%;">
-                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 ROM Pubkey:" }</label>
-                                <input type="text"
-                                    placeholder="64 hex chars — from device boot log"
-                                    value={app.esp32_pubkey.clone()}
-                                    oninput={ctx.link().callback(|e: InputEvent| {
-                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                        Msg::UpdateEspPubkey(input.value())
-                                    })}
-                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
-                                />
-                            </div>
-                            <div style="display: flex; flex-direction: column; width: 100%;">
-                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 Sig Pubkey:" }</label>
-                                <input type="text"
-                                    placeholder="64 hex chars — from device boot log"
-                                    value={app.esp32_sig_pubkey.clone()}
-                                    oninput={ctx.link().callback(|e: InputEvent| {
-                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                        Msg::UpdateEspSigPubkey(input.value())
-                                    })}
-                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
-                                />
-                            </div>
-                            <div style="display: flex; flex-direction: column; width: 100%;">
-                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "Supervisor Pubkey:" }</label>
-                                <input type="text"
-                                    placeholder="64 hex chars — supervisor public key"
-                                    value={app.supervisor_pubkey.clone()}
-                                    oninput={ctx.link().callback(|e: InputEvent| {
-                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
-                                        Msg::UpdateSupervisorPubkey(input.value())
-                                    })}
-                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
-                                />
-                            </div>
-                        </div>
+                        { connection_config(app, ctx) }
                     }
 
                     if !app.is_fetching_role && !app.is_local_supervisor() && !app.config_needs_setup() && app.active_role.is_none() {
@@ -154,6 +104,49 @@ pub fn render(app: &App, ctx: &Context<App>) -> Html {
 
                     if let Some(role) = app.active_role {
                         if role == Role::Supervisor {
+                            { supervisor_tools(app, ctx) }
+                        } else {
+                            <h3>{ format!("System Controls (Role: {})", role.as_str()) }</h3>
+                            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
+                                <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(CMD_READ_SENSOR.to_string(), "green".to_string()))} style="background: #4caf50; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                    { format!("Read Sensors ({}s Green)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
+                                </button>
+                                
+                                if role == Role::Operator || role == Role::Admin {
+                                    <>
+                                        <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(format!("{}20.0", CMD_SET_THRESHOLD), "yellow".to_string()))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                            { format!("Set Threshold (20C) ({}s Yellow)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
+                                        </button>
+                                        <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(format!("{}30.0", CMD_SET_THRESHOLD), "yellow".to_string()))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                            { format!("Set Threshold (30C) ({}s Yellow)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
+                                        </button>
+                                    </>
+                                }
+                                
+                                if role == Role::Admin {
+                                    <>
+                                        <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(CMD_CLEAR_ALARM.to_string(), "red".to_string()))} style="background: #2196f3; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                            { format!("Clear Alarm ({}s Red)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
+                                        </button>
+                                        <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(CMD_COLOR_RED.to_string(), "red".to_string()))} style="background: #f44336; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
+                                            { "Test Alarm" }
+                                        </button>
+                                    </>
+                                }
+                            </div>
+                        }
+                    }
+                    
+                    if let Some(err) = &app.error {
+                        <div class="error">{ err }</div>
+                    }
+                }
+            </div>
+        }
+}
+
+fn supervisor_tools(app: &App, ctx: &Context<App>) -> Html {
+    html! {
                             <div style="background: #1e1e1e; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #444;">
                                 <h3 style="margin-top: 0; color: #ffa000;">{ "Supervisor CA Tools" }</h3>
                                 <p style="font-size: 14px; margin-bottom: 10px;">{ "Provision a new RAM Role securely onto the ESP32." }</p>
@@ -271,42 +264,61 @@ pub fn render(app: &App, ctx: &Context<App>) -> Html {
                                     </div>
                                 }
                             </div>
-                        } else {
-                            <h3>{ format!("System Controls (Role: {})", role.as_str()) }</h3>
-                            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
-                                <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(CMD_READ_SENSOR.to_string(), "green".to_string()))} style="background: #4caf50; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                    { format!("Read Sensors ({}s Green)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
-                                </button>
-                                
-                                if role == Role::Operator || role == Role::Admin {
-                                    <>
-                                        <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(format!("{}20.0", CMD_SET_THRESHOLD), "yellow".to_string()))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                            { format!("Set Threshold (20C) ({}s Yellow)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
-                                        </button>
-                                        <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(format!("{}30.0", CMD_SET_THRESHOLD), "yellow".to_string()))} style="background: #ff9800; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                            { format!("Set Threshold (30C) ({}s Yellow)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
-                                        </button>
-                                    </>
-                                }
-                                
-                                if role == Role::Admin {
-                                    <>
-                                        <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(CMD_CLEAR_ALARM.to_string(), "red".to_string()))} style="background: #2196f3; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                            { format!("Clear Alarm ({}s Red)", shared::terminology::COMMAND_LED_TIMEOUT_MS / 1000) }
-                                        </button>
-                                        <button onclick={ctx.link().callback(|_| Msg::StartCommandWithColor(CMD_COLOR_RED.to_string(), "red".to_string()))} style="background: #f44336; padding: 10px 20px; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold;">
-                                            { "Test Alarm" }
-                                        </button>
-                                    </>
-                                }
+    }
+}
+
+fn connection_config(app: &App, ctx: &Context<App>) -> Html {
+    html! {
+                        <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 15px; max-width: 800px; padding: 15px; background: #1e1e1e; border: 1px dashed #555; border-radius: 6px;">
+                            <h4 style="margin: 0; color: #888;">{ "Connection Configuration" }</h4>
+                            <div style="display: flex; flex-direction: column;">
+                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 IP Address:" }</label>
+                                <input type="text"
+                                    placeholder="device IP address"
+                                    value={app.esp32_ip.clone()}
+                                    oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                        Msg::UpdateIp(input.value())
+                                    })}
+                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; max-width: 300px; box-sizing: border-box; font-size: 16px;"
+                                />
                             </div>
-                        }
-                    }
-                    
-                    if let Some(err) = &app.error {
-                        <div class="error">{ err }</div>
-                    }
-                }
-            </div>
-        }
+                            <div style="display: flex; flex-direction: column; width: 100%;">
+                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 ROM Pubkey:" }</label>
+                                <input type="text"
+                                    placeholder="64 hex chars — from device boot log"
+                                    value={app.esp32_pubkey.clone()}
+                                    oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                        Msg::UpdateEspPubkey(input.value())
+                                    })}
+                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
+                                />
+                            </div>
+                            <div style="display: flex; flex-direction: column; width: 100%;">
+                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "ESP32 Sig Pubkey:" }</label>
+                                <input type="text"
+                                    placeholder="64 hex chars — from device boot log"
+                                    value={app.esp32_sig_pubkey.clone()}
+                                    oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                        Msg::UpdateEspSigPubkey(input.value())
+                                    })}
+                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
+                                />
+                            </div>
+                            <div style="display: flex; flex-direction: column; width: 100%;">
+                                <label style="color: #ccc; font-size: 14px; margin-bottom: 5px; font-weight: bold;">{ "Supervisor Pubkey:" }</label>
+                                <input type="text"
+                                    placeholder="64 hex chars — supervisor public key"
+                                    value={app.supervisor_pubkey.clone()}
+                                    oninput={ctx.link().callback(|e: InputEvent| {
+                                        let input = e.target_unchecked_into::<web_sys::HtmlInputElement>();
+                                        Msg::UpdateSupervisorPubkey(input.value())
+                                    })}
+                                    style="background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 4px; width: 100%; box-sizing: border-box; font-size: 16px; font-family: monospace;"
+                                />
+                            </div>
+                        </div>
+    }
 }
