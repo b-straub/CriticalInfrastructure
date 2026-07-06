@@ -1,6 +1,0 @@
-# Dev only. `trunk serve` forwards the app's same-origin /proxy.php to the local
-# PHP proxy (run: php -S localhost:8000 proxy.php). In production the app and
-# proxy.php are served from the same origin by your webserver, so this is unused.
-[[proxy]]
-rewrite = "/proxy.php"
-backend = "http://localhost:8000/proxy.php"

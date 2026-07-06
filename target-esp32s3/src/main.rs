@@ -28,6 +28,7 @@ use shared::terminology::*;
 
 mod commands;
 mod crypto;
+mod http;
 mod identity;
 mod net;
 mod sensor;
@@ -183,7 +184,7 @@ async fn main(spawner: Spawner) {
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
         
-        info!("Listening on TCP:8080...");
+        info!("HTTP listening on :8080...");
         
         let connected = loop {
             match embassy_time::with_timeout(embassy_time::Duration::from_millis(250), socket.accept(8080)).await {
@@ -246,15 +247,14 @@ async fn main(spawner: Spawner) {
         
         info!("Accepted connection from {:?}", socket.remote_endpoint());
         let mut buf = [0; 1024];
-        
-        loop {
-            match socket.read(&mut buf).await {
-                Ok(0) => {
-                    info!("Connection closed");
-                    break;
+
+        {
+            match http::read_request(&mut socket, &mut buf).await {
+                Some(http::Request::Preflight) => {
+                    http::write_preflight(&mut socket).await;
                 }
-                Ok(n) => {
-                    let payload = core::str::from_utf8(&buf[..n]).unwrap_or("");
+                Some(http::Request::Post(body)) => {
+                    let payload = core::str::from_utf8(&body).unwrap_or("");
                     info!("Received payload: {}", payload);
                     
                     let mut supervisor_key = [0u8; 32];
@@ -486,16 +486,11 @@ async fn main(spawner: Spawner) {
                         &mut rng,
                     );
 
-                    let _ = socket.write(final_response.as_bytes()).await;
-                    let _ = socket.flush().await;
-                    socket.close();
-                    break;
+                    http::write_response(&mut socket, &final_response).await;
                 }
-                Err(e) => {
-                    info!("Read error: {:?}", e);
-                    break;
-                }
+                _ => {}
             }
         }
+        socket.close();
     }
 }

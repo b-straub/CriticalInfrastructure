@@ -232,9 +232,11 @@ impl AppState {
             let (payload, ephemeral_secret) =
                 crypto::encrypt_command(seed.as_slice(), &cmd, &esp_pub_bytes, timestamp);
 
-            // Same-origin: the proxy is served next to the app in prod, and via
-            // a Trunk [[proxy]] in dev. Avoids CORS and HTTPS mixed-content.
-            let url = format!("/proxy.php?ip={}", ip);
+            // Talk to the device's HTTP endpoint directly (no proxy). The user
+            // enters the host in the IP box; the firmware serves on :8080. Works
+            // from an http://localhost origin (WebAuthn secure context) with no
+            // mixed-content wall; the envelope is E2E-encrypted so plain HTTP is fine.
+            let url = format!("http://{}:8080/", ip);
             let opts = web_sys::RequestInit::new();
             opts.set_method("POST");
             opts.set_mode(web_sys::RequestMode::Cors);

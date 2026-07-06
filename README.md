@@ -97,10 +97,10 @@ ESP32 X25519 PubKey:                   <64 hex chars>
 ### 2. Run the dashboard
 
 ```sh
-./run_dashboard.sh    # PHP proxy on :8000 + `trunk serve` for the Yew webapp
+./run_dashboard.sh    # builds + serves the Leptos webapp on http://localhost and opens your browser
 ```
 
-Open the served URL, click **Register New Passkey** (WebAuthn PRF), then fill the connection panel — nothing is hardcoded, and the values persist in the browser's LocalStorage:
+Served on `http://localhost` (a WebAuthn secure context, so no HTTPS needed) and the app talks to the device's HTTP endpoint directly — no proxy. Click **Register New Passkey** (WebAuthn PRF), then fill the connection panel — nothing is hardcoded, and the values persist in the browser's LocalStorage:
 
 | Field | Value |
 |-------|-------|

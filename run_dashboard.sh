@@ -1,11 +1,5 @@
 #!/bin/bash
-
-# Trap SIGINT and SIGTERM to kill all background child processes when the script exits
-trap 'kill 0' EXIT
-
-echo "[+] Starting PHP UDP Proxy on http://localhost:8000"
-php -S localhost:8000 proxy.php > proxy.log 2>&1 &
-PHP_PID=$!
-
-echo "[+] Starting Yew WebApp Dashboard..."
-cd supervisor-web && trunk serve
+# One-click local dashboard: builds + serves the static app on http://localhost
+# (a WebAuthn secure context) and opens it in your browser. The app talks to the
+# ESP32 directly over HTTP — no proxy. Enter the device's IP in the app's IP box.
+cd "$(dirname "$0")/supervisor-web" && exec trunk serve --open
