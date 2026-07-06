@@ -10,14 +10,7 @@ use rand_core::OsRng;
 use hex;
 use gloo_storage::{LocalStorage, Storage};
 
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(catch)]
-    async fn create_passkey_prf(user_id: &str) -> Result<JsValue, JsValue>;
-
-    #[wasm_bindgen(catch)]
-    async fn get_passkey_prf() -> Result<JsValue, JsValue>;
-}
+mod webauthn;
 
 // The PRF-derived seed is cached only briefly: any window this long without a
 // command wipes it from memory, forcing a (fast, biometric) re-derivation.
@@ -155,17 +148,9 @@ impl Component for App {
                 let link = ctx.link().clone();
                 let user_id = self.user_id.clone();
                 spawn_local(async move {
-                    match create_passkey_prf(&user_id).await {
-                        Ok(val) => {
-                            let seed_array = js_sys::Uint8Array::new(&js_sys::Reflect::get(&val, &JsValue::from_str("seed")).unwrap());
-                            let seed = seed_array.to_vec();
-                            let role_str = js_sys::Reflect::get(&val, &JsValue::from_str("role")).unwrap().as_string().unwrap();
-                            link.send_message(Msg::Authenticated(seed, role_str));
-                        }
-                        Err(err) => {
-                            let msg = if let Some(e) = err.as_string() { e } else if let Some(m) = js_sys::Reflect::get(&err, &JsValue::from_str("message")).ok().and_then(|v| v.as_string()) { m } else { format!("{:?}", err) };
-                            link.send_message(Msg::AuthError(msg));
-                        }
+                    match webauthn::register(&user_id).await {
+                        Ok((seed, role)) => link.send_message(Msg::Authenticated(seed, role)),
+                        Err(e) => link.send_message(Msg::AuthError(e)),
                     }
                 });
                 false
@@ -173,17 +158,9 @@ impl Component for App {
             Msg::Authenticate => {
                 let link = ctx.link().clone();
                 spawn_local(async move {
-                    match get_passkey_prf().await {
-                        Ok(val) => {
-                            let seed_array = js_sys::Uint8Array::new(&js_sys::Reflect::get(&val, &JsValue::from_str("seed")).unwrap());
-                            let seed = seed_array.to_vec();
-                            let role_str = js_sys::Reflect::get(&val, &JsValue::from_str("role")).unwrap().as_string().unwrap();
-                            link.send_message(Msg::Authenticated(seed, role_str));
-                        }
-                        Err(err) => {
-                            let msg = if let Some(e) = err.as_string() { e } else if let Some(m) = js_sys::Reflect::get(&err, &JsValue::from_str("message")).ok().and_then(|v| v.as_string()) { m } else { format!("{:?}", err) };
-                            link.send_message(Msg::AuthError(msg));
-                        }
+                    match webauthn::authenticate().await {
+                        Ok((seed, role)) => link.send_message(Msg::Authenticated(seed, role)),
+                        Err(e) => link.send_message(Msg::AuthError(e)),
                     }
                 });
                 false
