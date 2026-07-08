@@ -1,4 +1,6 @@
 .build/
 .swiftpm/
-*.xcodeproj
 DerivedData/
+
+# Track the shared .xcodeproj (build settings + schemes); ignore per-user state
+**/xcuserdata/
