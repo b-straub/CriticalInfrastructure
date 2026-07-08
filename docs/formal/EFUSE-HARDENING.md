@@ -30,7 +30,7 @@ ESP32-S3 Secure Boot v2 requires **RSA-3072-PSS** — the S3 has no ECDSA
 secure-boot path, so the signing key *must* be RSA-3072:
 
 - The key lives in a **PIV slot** and never leaves the authenticator. Sign
-  firmware via OpenSC PKCS#11 → `espsecure.py sign_data --hsm …`.
+  firmware via OpenSC PKCS#11 → `espsecure sign_data --hsm …`.
 - **macOS/Linux:** the vendor companion app is still under development, but PIV
   signing is standards-based — reach the key through OpenSC's generic PKCS#11
   module. Provision the on-card RSA-3072 key where tooling is easiest (Windows
@@ -63,8 +63,12 @@ hardware-only **root** from which the Curve25519 seeds are derived.
 Implemented behind the `efuse-hmac-identity` Cargo feature
 (`target-esp32s3/src/main.rs`):
 
-1. Burn a 256-bit key into **eFuse block 0**, **read-protected**, with key
-   purpose **`HMAC_UP`** (HMAC upstream / user-readable output).
+1. Burn a 256-bit key into **key block `BLOCK_KEY0`** (the firmware's
+   `KeyId::Key0` — *not* the `BLOCK0` system block) with key purpose **`HMAC_UP`**
+   (HMAC upstream / user-readable output). `burn-key … HMAC_UP` **auto
+   read-protects** the block (sets `RD_DIS` for BLOCK4 — verified via an
+   `espefuse --virt` dry-run), so software can never read the root; the HMAC
+   peripheral still reads it internally.
 2. At boot the firmware uses the **HMAC-SHA256 peripheral** to compute
    - `x25519_seed  = HMAC(eFuse_key, "esp-x25519-identity-v1")`
    - `ed25519_seed = HMAC(eFuse_key, "esp-ed25519-signing-v1")`
@@ -86,16 +90,77 @@ Properties:
   **Secure Boot v2** (only signed firmware runs) + **flash encryption** to close
   that path.
 
-## Provisioning checklist (production)
+## Provisioning runbook (production)
 
-- [ ] Generate a 256-bit random HMAC key; burn into eFuse **block 0** as
-      `HMAC_UP`, then **read-protect** the block (`espefuse.py burn_key`).
-- [ ] Build with `--features efuse-hmac-identity`.
-- [ ] Read the `ESP32 Ed25519 Response-Signing PubKey` printed at boot; provision
-      it into the WebApp "ESP32 Sig Pubkey" field.
-- [ ] Enable **flash encryption** (XTS-AES-256, eFuse key) so the ROLES table and
-      any stored data are encrypted at rest.
-- [ ] Enable **Secure Boot v2** so only signed firmware can run.
+> **Every `burn-*` is irreversible** — eFuse bits only go 0 → 1, and espefuse makes
+> you type `BURN` to confirm. Do the stages **in order**: the identity + JTAG burns
+> keep the chip re-flashable; the external-read lockdown (Stage 4) blocks memory/
+> eFuse dumps, so run it only once the hardware identity is verified working.
+> `espefuse` ships with `esptool` (`brew install esptool` / `pip install esptool`).
+> On esptool ≥ 5 every **real-device** command needs `--port <PORT>` (e.g.
+> `/dev/cu.usbmodemXXXX`) with the chip in download mode — `--virt` does not. The
+> examples below omit `--port` for brevity; add it, or use `./efuse-harden.sh`
+> (which auto-detects the port).
+
+**Rehearse first — no hardware, no burns.** `--virt` runs the whole sequence
+against a virtual eFuse; this entire runbook was validated this way (it corrected a
+docs claim — `HMAC_UP` *is* auto read-protected on the S3):
+
+```sh
+espefuse --virt --chip esp32s3 --path-efuse-file /tmp/virt.json --do-not-confirm \
+  burn-key BLOCK_KEY0 hmac_key.bin HMAC_UP \
+  burn-efuse DIS_PAD_JTAG 1 DIS_USB_JTAG 1 ENABLE_SECURITY_DOWNLOAD 1  summary
+# expect: RD_DIS=1 (BLOCK4) · DIS_PAD_JTAG/DIS_USB_JTAG/ENABLE_SECURITY_DOWNLOAD = True
+```
+
+### Stage 0 — inspect (read-only)
+```sh
+espefuse summary                 # chip = ESP32-S3, nothing critical pre-burned
+```
+
+### Stage 1 — hardware identity root (HMAC-KDF key)
+```sh
+head -c 32 /dev/urandom > hmac_key.bin
+espefuse burn-key BLOCK_KEY0 hmac_key.bin HMAC_UP   # auto read-protects (RD_DIS)
+espefuse summary | grep RD_DIS                      # verify BLOCK4 read-disabled (=1)
+rm -P hmac_key.bin                                     # macOS overwrite+delete (Linux: shred -u) — the raw root is clonable, destroy it
+```
+
+### Stage 2 — flash hardened firmware and VERIFY (still re-flashable)
+```sh
+cd target-esp32s3 && source ~/export-esp.sh
+cargo espflash flash --release --no-default-features \
+  --features "udp-transport,efuse-hmac-identity" --monitor
+```
+Boot log must show *"Deriving device identity from read-protected eFuse HMAC key"*
+and a **new** `ESP32 Ed25519 Response-Signing PubKey` (not a panic). Provision that
+pubkey into the client (it differs from the dev key), run a full command
+round-trip. **Do not proceed until identity + a command verify.**
+
+### Stage 3 — disable JTAG (irreversible; still re-flashable)
+```sh
+espefuse burn-efuse DIS_PAD_JTAG 1     # hard-disable pin JTAG
+espefuse burn-efuse DIS_USB_JTAG 1     # disable USB-Serial-JTAG's JTAG (USB-CDC logs still work)
+```
+
+### Stage 4 — lock external read (POINT OF NO RETURN for dumps)
+```sh
+espefuse burn-efuse ENABLE_SECURITY_DOWNLOAD 1
+```
+Secure download still **flashes** firmware but disables all SRAM/register/flash/
+eFuse **reads** over the download path — no external dump of anything. Two
+consequences: `espefuse summary` (and all reads) stop working, and reflashing
+becomes **stubless** (`esptool write_flash --no-stub`; verify `cargo espflash`
+still works before relying on it). So do this **last**, when the image is final —
+it's the seal. (For units that must never be re-flashed at all, use `burn-efuse
+DIS_DOWNLOAD_MODE 1` instead — updates then only via a signed OTA path you build.)
+
+### Stage 5 — (heavier) encrypt at rest + only-signed-firmware
+Flash encryption (XTS-AES-256) and Secure Boot v2 (RSA-3072) close the last
+residual — a RAM/flash disclosure on unsigned firmware. Both need the second-stage
+bootloader to do transparent decrypt / signature verification, so on a bare esp-hal
+image flashed with espflash they require the IDF bootloader + `espsecure` signing
+(§ "Secure-boot signing" — the RSA-3072 signer lives on the PIV card).
 
 ## If you need a key that is *never* in software
 
