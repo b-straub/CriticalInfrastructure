@@ -16,10 +16,11 @@ Critical infrastructure worldwide is currently facing an unprecedented vulnerabi
 This project demonstrates that it is now possible to build *impenetrable* embedded devices using commercially available microcontrollers (ESP32-S3), modern memory-safe systems languages (Rust), and enterprise-grade hardware cryptography (PIV Smart Cards) — all accelerated by AI.
 
 ### Features
-*   **Memory-Safe Firmware:** Written in 100% Rust (`no_std`) to eliminate buffer overflows and memory corruption vulnerabilities.
-*   **Hardware Cryptographic RBAC:** All commands are signed using Ed25519 signatures, ensuring strict Role-Based Access Control.
-*   **True Hardware Security Module (HSM) Boot:** The ESP-IDF bootloader and Rust firmware are signed offline using an air-gapped PKCS#11 Smart Card token (such as a Token2 T2F2). 
-*   **Irreversible eFuse Lockdown:** Bootloader verification hashes and AES-256 Flash Encryption keys are permanently burned into the silicon, making physical tampering impossible.
+*   **Memory-Safe Firmware:** 100% Rust (`no_std`) — no buffer overflows, no memory corruption.
+*   **Hardware Cryptographic RBAC:** every command carries a hardware-held client signature — **Ed25519** on the web/HTTP flavor, **P-256** on the native/UDP flavor — and the device verifies a supervisor→role certificate chain before acting.
+*   **Two transports, one crypto core:** a browser dashboard (HTTP + **WebAuthn-PRF** passkeys) and a native macOS client (UDP + **Secure Enclave** or a **Token2 PIV** hardware key) share one signed + encrypted command envelope — see [`clients/apple`](clients/apple).
+*   **Hardware-Rooted Device Identity (burned + validated):** the device's X25519/Ed25519 keys are derived at boot from a **read-protected eFuse HMAC key** — the root never touches software and can't be cloned, even with physical access. On the reference board this is burned, with **JTAG disabled**; the secure-download read-lock and flash encryption are documented as the final seal.
+*   **HSM Secure-Boot Signing (validated):** RSA-3072-PSS Secure Boot v2 images are signed by a **Token2 PIV** key via OpenSC PKCS#11 — the private key never leaves the token (signed + verified end-to-end). Full Secure Boot v2 enablement (signed ESP-IDF bootloader + the irreversible digest/enable burns) is the documented last step.
 
 ## Hardware Schematic
 
@@ -128,17 +129,31 @@ The dashboard is a **static WASM bundle** (`trunk build` → `dist/`) that talks
 
 Reachability for the remote case is pure networking — a VPN into the device's network, or a routable public IP / DynDNS + port-forward (carrier LTE is usually CGNAT, so an outbound tunnel like Cloudflare/Tailscale is the robust option). The app itself never changes; it just points at wherever the device is reachable.
 
-### Production hardening (optional)
+### Native macOS client (UDP flavor)
 
-Derive the device identity from a read-protected eFuse key instead of flash storage:
+Instead of the browser, drive the device from a native **SwiftUI macOS app** over UDP — signatures come from this Mac's **Secure Enclave** (Touch ID) or a **Token2 PIV** hardware key, with no domain/passkey ceremony. Flash the UDP ROM flavor and open the app:
 
 ```sh
-cd target-esp32s3 && cargo build --release --features efuse-hmac-identity
+./flash-udp.sh <WIFI_SSID> <WIFI_PASSWORD> <SUPERVISOR_P256_PUBKEY_66HEX>
+open clients/apple/CriticalInfra.xcodeproj    # ⌘R (destination: My Mac)
 ```
 
-See [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md) for the design and the provisioning checklist.
+The **supervisor** identity can be a portable **Token2 PIV** key (ECCP256 in slot 9c, PIN per command) rather than a Mac-bound enclave key — the same card that signs Secure Boot v2 images (RSA-3072 in slot 9a). Full walkthrough — hardware-key provisioning, the macOS CryptoTokenKit gotchas, Touch ID — in [`clients/apple/README.md`](clients/apple/README.md).
 
-> 🚧 **Coming soon:** a step-by-step eFuse-burning how-to. eFuse writes are **irreversible**, so the procedure is being validated on spare boards first (two backups on the way in case something goes wrong).
+### Production hardening (eFuse)
+
+Root the device identity in a **read-protected eFuse HMAC key** instead of flash, and lock the chip down:
+
+```sh
+./efuse-harden.sh rehearse    # dry-run the entire burn sequence on a virtual eFuse (no hardware)
+./efuse-harden.sh check       # read-only: the real chip's current fuse state
+# firmware that derives its identity from the eFuse root (panics if the key is absent):
+cd target-esp32s3 && cargo build --release --no-default-features --features "udp-transport,efuse-hmac-identity"
+```
+
+The full **hardware-validated** runbook — HMAC identity root → JTAG off → secure-download read-lock, plus the Token2 RSA-3072 Secure Boot v2 signing flow — is in [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md). Every command was rehearsed on a virtual ESP32-S3 (`espefuse --virt`) before burning; on the reference board the identity + JTAG stages are done.
+
+> ⚠️ eFuse writes are **irreversible** (bits only go 0 → 1). Rehearse with `./efuse-harden.sh rehearse`, verify between stages, and leave the read-lock (`ENABLE_SECURITY_DOWNLOAD`) and Secure Boot for last.
 
 ## License
 

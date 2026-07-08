@@ -13,33 +13,77 @@ ever shared between them:
 
 | Key | Home | Role |
 |-----|------|------|
-| **Supervisor identity** | authenticator — **FIDO2 / WebAuthn-PRF** | derives the Ed25519 key that signs commands and issues role certificates |
-| **Firmware secure-boot** | authenticator — **PIV, RSA-3072** | signs the Secure Boot v2 firmware image; eFuse stores only its public-key digest |
+| **Supervisor identity** | **WebAuthn-PRF** passkey (web flavor) · **Token2 PIV ECCP256** slot 9c, or Mac Secure Enclave (native flavor) | signs commands, issues role certificates |
+| **Firmware secure-boot** | **Token2 PIV, RSA-3072** slot 9a | signs the Secure Boot v2 firmware image; eFuse stores only its public-key digest |
 | **Device identity + flash key** | **ESP32 eFuse** (HMAC-KDF root + XTS-AES) | per-device X25519/Ed25519 seeds and the flash-encryption key; hardware-only, never leaves the chip |
 
-The reference build uses a single **Token2 T2F2 (release 3.3)** authenticator for
-the first two domains: its FIDO2 side backs the supervisor passkey, and its PIV
-applet (NIST SP 800-73-4, RSA-3072-capable) holds the secure-boot signing key.
-`always_uv` is on, so every operation requires user verification. In production
-you would split these onto separate keys (a daily-use identity vs. a rarely-used
-release-signing key); for this demo one device is fine.
+On the reference board a single **Token2 PIN+ (release 3.3)** holds two of these
+domains on its **PIV** applet — both validated end-to-end: the **native-flavor
+supervisor** (ECCP256, slot 9c) and the **secure-boot signer** (RSA-3072, slot 9a).
+The *web* flavor's supervisor is a WebAuthn-PRF passkey instead; the device-identity
+and secure-boot domains are identical for both flavors. In production you would
+split the rarely-used release-signing key onto its own token; for this demo one
+device is fine.
 
-### Secure-boot signing (RSA-3072)
+### Secure-boot signing — RSA-3072 on the Token2 PIV (validated)
 
-ESP32-S3 Secure Boot v2 requires **RSA-3072-PSS** — the S3 has no ECDSA
-secure-boot path, so the signing key *must* be RSA-3072:
+ESP32-S3 Secure Boot v2 requires **RSA-3072-PSS** (SHA-256) — the S3 has no ECDSA
+secure-boot path, so the signing key *must* be RSA-3072. Only the **SHA-256 digest
+of the public key** is burned into eFuse (`SECURE_BOOT_DIGEST0`, up to 3 keys); the
+private key stays on the authenticator. A Mac's Secure Enclave can't substitute
+(P-256 only, no RSA), which is why this key lives on the Token2 PIV.
 
-- The key lives in a **PIV slot** and never leaves the authenticator. Sign
-  firmware via OpenSC PKCS#11 → `espsecure sign_data --hsm …`.
-- **macOS/Linux:** the vendor companion app is still under development, but PIV
-  signing is standards-based — reach the key through OpenSC's generic PKCS#11
-  module. Provision the on-card RSA-3072 key where tooling is easiest (Windows
-  companion app, or `pkcs11-tool` / `piv-tool`), then sign from any OS.
-- **Enroll a backup signer.** Secure Boot v2 trusts up to **three** signing-key
-  digests in eFuse — burn a second key's digest (on a backup authenticator) so a
-  lost key never leaves the device unable to accept signed firmware.
-- A Mac's Secure Enclave can't substitute here: it holds only P-256 EC keys (no
-  RSA), so an RSA-3072 secure-boot key can only live on a PIV/HSM device.
+**The Token2 PIV applet does this — validated end-to-end on the reference board.**
+Its `SELECT AID` response advertises RSA 1024/2048/**3072**/4096 (the Windows
+Companion App's PIV *generate* dialog only exposes 2048/4096, but the applet
+supports 3072), and OpenSC's PKCS#11 module exposes the exact primitive:
+
+```
+$ pkcs11-tool --module /opt/homebrew/lib/opensc-pkcs11.so -M | grep -i pss
+  RSA-PKCS-PSS         keySize={1024,3072}  hw, sign
+  SHA256-RSA-PKCS-PSS  keySize={1024,3072}  sign        ← RSA-3072-PSS-SHA256
+```
+PIV RSA is a raw modexp on host-padded input, so the PSS encoding happens
+host-side — the same reason a YubiKey PIV works as the reference HSM.
+
+**Provision (PIV slot 9a, leaving 9c for the supervisor):** the Companion App can't
+*generate* 3072 for PIV, so generate off-card and **import**:
+```sh
+openssl genrsa -out sb_key.pem 3072
+openssl req -new -x509 -key sb_key.pem -sha256 -days 7300 \
+  -subj "/CN=ESP32-S3 Secure Boot Signer" -out sb_cert.pem
+openssl pkcs12 -export -inkey sb_key.pem -in sb_cert.pem -out sb_key.p12 -passout pass:CHANGEME
+#  → import sb_key.p12 into PIV slot 9a via the Token2 Companion App, then:
+rm -P sb_key.pem sb_key.p12        # destroy the off-card copy — key is now hardware-bound
+```
+The private key existed off-card only during generation/import; afterwards it's
+card-only. Since it's then unrecoverable, **enroll a second key's digest for
+backup** (Secure Boot v2 trusts up to 3) rather than keeping an off-card copy.
+
+**Sign (validated):**
+```sh
+pip install 'esptool[hsm]'         # esp_hsm_sign + python-pkcs11
+cat > hsm.ini <<'EOF'
+[hsm_config]
+pkcs11_lib = /opt/homebrew/lib/opensc-pkcs11.so
+slot = 0
+label = PIV AUTH key               # PIV slot 9a private key
+label_pubkey = PIV AUTH pubkey
+EOF
+# 'credentials' omitted on purpose → espsecure prompts for the PIV PIN (never on disk)
+espsecure sign-data --version 2 --hsm --hsm-config hsm.ini --output signed.bin app.bin
+espsecure verify-signature --version 2 --keyfile sb_pub.pem signed.bin        # "Signature block 0 … successful"
+espsecure digest-sbv2-public-key --keyfile sb_pub.pem --output sb_digest.bin  # the 32-byte SECURE_BOOT_DIGEST0
+```
+`esp_hsm_sign` signs with `RSA_PKCS_PSS(SHA256, MGF1-SHA256, salt=32)` — exactly the
+mechanism above. Confirmed on hardware: the Token2 produced a Secure Boot v2
+signature that `verify-signature` accepts.
+
+**Enabling Secure Boot v2 is a separate, brick-prone step** beyond signing: the
+second-stage bootloader must also be signed and verified, i.e. building the
+**ESP-IDF bootloader** (not the bare esp-hal image espflash produces), then the
+irreversible `SECURE_BOOT_DIGEST0` + `SECURE_BOOT_EN` burns. Do it last, on a final
+image, with a backup key enrolled.
 
 ## What the ESP32-S3 offers for eFuse-bound crypto
 

@@ -108,3 +108,8 @@ end-to-end against a **Token2 (PIV+FIDO+CCID)**.
 4. In the picker the inserted key shows as **Hardware Key** → **Act as Supervisor**
    → register roles / provision keys (a card **PIN** per signature; slot 9c does
    not cache).
+
+> **Same card, two roles.** The Token2's PIV applet also holds the device's
+> **RSA-3072 Secure Boot v2 signing key** in slot **9a** (ECC supervisor in 9c,
+> RSA release-signer in 9a) — validated end-to-end. See
+> [`docs/formal/EFUSE-HARDENING.md`](../../docs/formal/EFUSE-HARDENING.md).
