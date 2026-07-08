@@ -52,4 +52,8 @@ pub mod terminology {
     
     // Timeouts
     pub const COMMAND_LED_TIMEOUT_MS: u64 = 5000;
+
+    // Network -- single source of truth for the port on both the firmware and
+    // the clients. Served over HTTP/TCP or raw UDP depending on the ROM flavor.
+    pub const SUPERVISOR_PORT: u16 = 8080;
 }

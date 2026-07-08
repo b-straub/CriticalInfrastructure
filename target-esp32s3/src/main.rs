@@ -5,10 +5,7 @@
 esp_bootloader_esp_idf::esp_app_desc!();
 
 use embassy_executor::Spawner;
-use embassy_net::{
-    tcp::TcpSocket,
-    Config as NetConfig, StackResources,
-};
+use embassy_net::{Config as NetConfig, StackResources};
 use embassy_time::{Duration, Timer};
 use esp_alloc as _;
 use esp_backtrace as _;
@@ -26,15 +23,24 @@ use ws2812_spi::Ws2812;
 use static_cell::StaticCell;
 use shared::terminology::*;
 
+mod clientauth;
 mod commands;
 mod crypto;
+#[cfg(feature = "http-transport")]
 mod http;
 mod identity;
 mod net;
+mod protocol;
 mod sensor;
 mod state;
 mod storage;
 use crate::state::*;
+
+// Exactly one transport flavor per ROM (see Cargo.toml / UDP-TRANSPORT.md).
+#[cfg(all(feature = "http-transport", feature = "udp-transport"))]
+compile_error!("enable exactly one transport: `http-transport` OR `udp-transport`");
+#[cfg(not(any(feature = "http-transport", feature = "udp-transport")))]
+compile_error!("enable one transport: `http-transport` (default) or `udp-transport`");
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -48,15 +54,15 @@ async fn main(spawner: Spawner) {
     }
 
     let peripherals = esp_hal::init(esp_hal::Config::default());
-    
+
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
-    
+
     esp_alloc::heap_allocator!(size: 72 * 1024);
-    
+
     let timg1 = TimerGroup::new(peripherals.TIMG1);
     let mut rng = Rng::new(peripherals.RNG);
-    
+
     // Device identity (X25519 for the command envelope, Ed25519 for signing
     // responses). The two provisioning paths live in `identity.rs`.
     #[cfg(feature = "efuse-hmac-identity")]
@@ -64,10 +70,10 @@ async fn main(spawner: Spawner) {
         identity::derive_identity(peripherals.SHA, peripherals.HMAC);
     #[cfg(not(feature = "efuse-hmac-identity"))]
     let (esp_x25519_secret, esp_signing_key) = identity::derive_identity(&mut rng);
-    
+
     // We can still pass rng to esp_wifi because we didn't consume it
     let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
-    
+
     let (mut _controller, interfaces) =
         esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
     let wifi_interface = interfaces.sta;
@@ -76,19 +82,19 @@ async fn main(spawner: Spawner) {
     let spi = Spi::new(peripherals.SPI2, spi_config).expect("SPI new failed")
         .with_mosi(peripherals.GPIO4);
     let mut ws2812 = Ws2812::new(spi);
-    
-    let mut data = [colors::BLACK; 8];
+
+    let data = [colors::BLACK; 8];
     ws2812.write(data.iter().cloned()).unwrap();
 
     use esp_hal::i2c::master::{I2c, Config as I2cConfig};
     use lcd1602_driver::lcd::{Lcd, Basic, Ext};
     use lcd1602_driver::sender::I2cSender;
-    
+
     let mut i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
         .expect("I2C new failed")
         .with_sda(peripherals.GPIO8)
         .with_scl(peripherals.GPIO9);
-    
+
     let mut delay = esp_hal::delay::Delay::new();
 
     // Robust LCD reset BEFORE the driver init. A warm flash resets the ESP but
@@ -109,16 +115,16 @@ async fn main(spawner: Spawner) {
 
     let mut sender = I2cSender::new(&mut i2c, 0x27);
     let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
-    
+
     // Set up GPIO21 for DHT11 data line
     use esp_hal::gpio::Flex;
     let mut dht_pin = Flex::new(peripherals.GPIO21);
-    
+
     lcd.clean_display();
     lcd.write_str_to_cur("Init Network...");
 
     let net_config = NetConfig::dhcpv4(Default::default());
-    
+
     static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
     let (stack, runner) = embassy_net::new(
         wifi_interface,
@@ -130,10 +136,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net::connection(_controller)).unwrap();
     spawner.spawn(net::net_task(runner)).unwrap();
 
-    // TCP Server Loop
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
-    
     if let Some(saved_roles) = storage::load_roles() {
         unsafe {
             ROLES = saved_roles;
@@ -150,114 +152,142 @@ async fn main(spawner: Spawner) {
         info!("Loaded threshold from flash: {:.1}C", stored);
     }
 
-    
+
     loop {
         if stack.is_link_up() {
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
     }
-    
+
     info!("Waiting to get IP address...");
     loop {
         if let Some(config) = stack.config_v4() {
             info!("Got IP: {}", config.address);
             lcd.clean_display();
             lcd.set_cursor_pos((0, 0));
-            
+
             let mut ip_str = heapless::String::<32>::new();
             use core::fmt::Write;
             write!(&mut ip_str, "{}", config.address).unwrap();
-            
+
             // split CIDR mask (e.g. 192.168.1.100/24 -> 192.168.1.100)
             let ip_only = ip_str.split('/').next().unwrap_or(&ip_str);
             lcd.write_str_to_cur(ip_only);
-            
+
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
     }
-    
-    let mut last_dht_read = 0;
-    
-    loop {
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-        socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
-        
-        info!("HTTP listening on :8080...");
-        
-        // Keep the accept future ALIVE across idle ticks (pinned + select) so the
-        // socket never stops listening. with_timeout(accept) used to drop and
-        // re-arm accept every 250ms, and a browser SYN that landed in one of those
-        // gaps was dropped ("network connection interrupted"). Now the task stays
-        // parked in accept() and the idle sensor/LED runs on the timer branch.
-        let connected = {
-            let mut accept = core::pin::pin!(socket.accept(8080));
-            loop {
-                use embassy_futures::select::{select, Either};
-                match select(
-                    accept.as_mut(),
-                    embassy_time::Timer::after(embassy_time::Duration::from_millis(250)),
-                )
-                .await
-                {
-                    Either::First(Ok(())) => break true,
-                    Either::First(Err(e)) => {
-                        info!("Accept error: {:?}", e);
-                        break false;
-                    }
-                    Either::Second(_) => {
-                        // Idle tick (~250ms); the accept future stays alive.
-                        let now_ms = embassy_time::Instant::now().as_millis();
-                        if now_ms - last_dht_read > 2000 {
-                            last_dht_read = now_ms;
-                            let reading = sensor::read_dht11(&mut dht_pin);
-                            lcd.set_cursor_pos((0, 1));
-                            let mut status_str = heapless::String::<16>::new();
-                            use core::fmt::Write;
-                            if let Some((temp, hum)) = reading {
-                                let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
-                                unsafe {
-                                    LAST_TEMP = temp;
-                                    LAST_RH = hum;
-                                    if temp > THRESHOLD {
-                                        ALARM_ACTIVE = true;
-                                    }
-                                }
-                            } else {
-                                let _ = write!(&mut status_str, "Sensor Error    ");
-                            }
-                            lcd.write_str_to_cur(&status_str);
-                        }
 
+    let mut last_dht_read = 0u64;
+
+    // Single owner of the LCD status line + LED ring, driven either by the idle
+    // tick or by a processed command. A closure (not a fn) so both serve loops
+    // share it without having to name the concrete LCD/LED driver types.
+    enum Render<'a> {
+        Idle,
+        Command(&'a protocol::ProcessResult),
+    }
+    let mut render = |ev: Render| {
+        use core::fmt::Write as _;
+        match ev {
+            Render::Idle => {
+                let now_ms = embassy_time::Instant::now().as_millis();
+                if now_ms - last_dht_read > 2000 {
+                    last_dht_read = now_ms;
+                    let reading = sensor::read_dht11(&mut dht_pin);
+                    lcd.set_cursor_pos((0, 1));
+                    let mut status_str = heapless::String::<16>::new();
+                    if let Some((temp, hum)) = reading {
+                        let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
                         unsafe {
-                            let now = embassy_time::Instant::now().as_millis();
-                            if now < COMMAND_OVERRIDE_UNTIL {
-                                let color_copy = COMMAND_OVERRIDE_COLOR;
-                                ws2812.write(color_copy.iter().cloned()).unwrap();
-                            } else if ALARM_ACTIVE {
-                                if (now / 250) % 2 == 0 {
-                                    ws2812.write([colors::RED; 8].iter().cloned()).unwrap();
-                                } else {
-                                    ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
-                                }
-                            } else {
-                                ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                            LAST_TEMP = temp;
+                            LAST_RH = hum;
+                            if temp > THRESHOLD {
+                                ALARM_ACTIVE = true;
                             }
                         }
+                    } else {
+                        let _ = write!(&mut status_str, "Sensor Error    ");
+                    }
+                    lcd.write_str_to_cur(&status_str);
+                }
+
+                unsafe {
+                    let now = embassy_time::Instant::now().as_millis();
+                    if now < COMMAND_OVERRIDE_UNTIL {
+                        // Copy out of the mutable static before borrowing it for
+                        // the iterator (avoids a reference to a `static mut`).
+                        let color_copy = COMMAND_OVERRIDE_COLOR;
+                        ws2812.write(color_copy.iter().cloned()).unwrap();
+                    } else if ALARM_ACTIVE {
+                        if (now / 250) % 2 == 0 {
+                            ws2812.write([colors::RED; 8].iter().cloned()).unwrap();
+                        } else {
+                            ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                        }
+                    } else {
+                        ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
                     }
                 }
             }
-        };
-
-        if !connected {
-            continue;
+            Render::Command(r) => {
+                if let Some(line) = &r.status_line {
+                    lcd.set_cursor_pos((0, 1));
+                    lcd.write_str_to_cur(line);
+                }
+                if let Some(color) = r.led {
+                    ws2812.write(color.iter().cloned()).unwrap();
+                }
+            }
         }
-        
-        info!("Accepted connection from {:?}", socket.remote_endpoint());
-        let mut buf = [0; 1024];
+    };
 
-        {
+    // ---- HTTP flavor: one browser-reachable TCP connection at a time --------
+    #[cfg(feature = "http-transport")]
+    {
+        let mut rx_buffer = [0; 4096];
+        let mut tx_buffer = [0; 4096];
+
+        loop {
+            let mut socket =
+                embassy_net::tcp::TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+            socket.set_timeout(Some(Duration::from_secs(10)));
+
+            info!("HTTP listening on :{}...", SUPERVISOR_PORT);
+
+            // Keep the accept future ALIVE across idle ticks (pinned + select) so
+            // the socket never stops listening. A browser SYN that lands while
+            // accept is dropped/re-armed would be lost; here the task stays parked
+            // in accept() and the idle sensor/LED runs on the timer branch.
+            let connected = {
+                let mut accept = core::pin::pin!(socket.accept(SUPERVISOR_PORT));
+                loop {
+                    use embassy_futures::select::{select, Either};
+                    match select(
+                        accept.as_mut(),
+                        Timer::after(Duration::from_millis(250)),
+                    )
+                    .await
+                    {
+                        Either::First(Ok(())) => break true,
+                        Either::First(Err(e)) => {
+                            info!("Accept error: {:?}", e);
+                            break false;
+                        }
+                        Either::Second(_) => render(Render::Idle),
+                    }
+                }
+            };
+
+            if !connected {
+                continue;
+            }
+
+            info!("Accepted connection from {:?}", socket.remote_endpoint());
+            let mut buf = [0; 1024];
+
             match http::read_request(&mut socket, &mut buf).await {
                 Some(http::Request::Preflight) => {
                     http::write_preflight(&mut socket).await;
@@ -265,241 +295,93 @@ async fn main(spawner: Spawner) {
                 Some(http::Request::Post(body)) => {
                     let payload = core::str::from_utf8(&body).unwrap_or("");
                     info!("Received payload: {}", payload);
-                    
-                    let mut supervisor_key = [0u8; 32];
-                    if let Some(raw_hex_str) = option_env!("SUPERVISOR_PUBKEY") {
-                        let hex_str = raw_hex_str.trim();
-                        if hex_str.len() == 64 {
-                            for i in 0..32 {
-                                if let Ok(b) = u8::from_str_radix(&hex_str[i*2..i*2+2], 16) {
-                                    supervisor_key[i] = b;
-                                }
-                            }
-                        }
-                    }
-                    
-                    let mut parts = payload.split(';');
-                    let ephemeral_pub_hex = parts.next().unwrap_or("");
-                    let iv_hex = parts.next().unwrap_or("");
-                    let ciphertext_hex = parts.next().unwrap_or("");
-                    
-                    let mut valid_crypto = true;
-                    let mut ephemeral_pub_bytes = [0u8; 32];
-                    if ephemeral_pub_hex.len() == 64 {
-                        for i in 0..32 {
-                            if let Ok(b) = u8::from_str_radix(&ephemeral_pub_hex[i*2..i*2+2], 16) {
-                                ephemeral_pub_bytes[i] = b;
-                            } else { valid_crypto = false; }
-                        }
-                    } else { valid_crypto = false; }
-
-                    let mut iv = [0u8; 12];
-                    if iv_hex.len() == 24 {
-                        for i in 0..12 {
-                            if let Ok(b) = u8::from_str_radix(&iv_hex[i*2..i*2+2], 16) {
-                                iv[i] = b;
-                            } else { valid_crypto = false; }
-                        }
-                    } else { valid_crypto = false; }
-                    
-                    let mut ciphertext = heapless::Vec::<u8, 1024>::new();
-                    if ciphertext_hex.len() % 2 == 0 && ciphertext_hex.len() <= 2048 {
-                        for i in 0..(ciphertext_hex.len() / 2) {
-                            if let Ok(b) = u8::from_str_radix(&ciphertext_hex[i*2..i*2+2], 16) {
-                                let _ = ciphertext.push(b);
-                            } else { valid_crypto = false; }
-                        }
-                    } else { valid_crypto = false; }
-                    
-                    let mut response_msg = "Invalid Crypto Envelope";
-                    let mut dynamic_msg = heapless::String::<512>::new();
-                    // Timestamp of the incoming command, echoed and signed into the
-                    // response so the WebApp can bind the response to its request.
-                    let mut resp_ts = heapless::String::<24>::new();
-                    
-                    if valid_crypto {
-                        #[allow(deprecated)]
-                        use aes_gcm::{Aes256Gcm, Key, Nonce};
-                        #[allow(deprecated)]
-                        use aes_gcm::aead::{AeadInPlace, KeyInit};
-                        use sha2::{Sha256, Digest};
-                        
-                        let ephemeral_pub = x25519_dalek::PublicKey::from(ephemeral_pub_bytes);
-                        let shared_secret = esp_x25519_secret.diffie_hellman(&ephemeral_pub);
-                        
-                        let tx_key_hash = Sha256::digest(shared_secret.as_bytes());
-                        
-                        #[allow(deprecated)]
-                        let key = Key::<Aes256Gcm>::from_slice(&tx_key_hash);
-                        let cipher = Aes256Gcm::new(key);
-                        #[allow(deprecated)]
-                        let nonce = Nonce::from_slice(&iv);
-                        
-                        let len = ciphertext.len();
-                        if len >= 16 {
-                            let (msg, tag_bytes) = ciphertext.split_at_mut(len - 16);
-                            #[allow(deprecated)]
-                            let tag = aes_gcm::Tag::from_slice(tag_bytes);
-                            
-                            #[allow(deprecated)]
-                            if cipher.decrypt_in_place_detached(nonce, b"", msg, tag).is_ok() {
-                                if let Ok(plaintext) = core::str::from_utf8(msg) {
-                                    let mut inner_parts = plaintext.split(';');
-                                    let timestamp_str = inner_parts.next().unwrap_or("");
-                                    { use core::fmt::Write as _; let _ = write!(&mut resp_ts, "{}", timestamp_str); }
-                                    let cmd = inner_parts.next().unwrap_or("");
-                                    let sig_hex = inner_parts.next().unwrap_or("");
-                                    
-                                    let incoming_ts = timestamp_str.parse::<u64>().unwrap_or(0);
-                                    let is_replay = unsafe { incoming_ts <= LAST_TIMESTAMP };
-                                    
-                                    if !is_replay {
-                                        let mut sig_bytes = [0u8; 64];
-                                        let mut valid_sig_format = true;
-                                        if sig_hex.len() == 128 {
-                                            for i in 0..64 {
-                                                if let Ok(b) = u8::from_str_radix(&sig_hex[i*2..i*2+2], 16) {
-                                                    sig_bytes[i] = b;
-                                                } else { valid_sig_format = false; }
-                                            }
-                                        } else { valid_sig_format = false; }
-                                        
-                                        if valid_sig_format {
-                                            let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-                                            use ed25519_dalek::Verifier;
-                                            
-                                            let mut role_authorized = false;
-                                            let mut is_supervisor = false;
-                                            let mut authenticated_role = heapless::String::<32>::new();
-                                            
-                                            let mut signed_payload = heapless::String::<512>::new();
-                                            use core::fmt::Write;
-                                            let _ = write!(&mut signed_payload, "{}|{}", timestamp_str, cmd);
-                                            
-                                            if let Ok(supervisor_verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&supervisor_key) {
-                                                // 1. Try Supervisor Key mathematically
-                                                if supervisor_verifying_key.verify(signed_payload.as_bytes(), &sig).is_ok() {
-                                                    role_authorized = true;
-                                                    is_supervisor = true;
-                                                    let _ = core::fmt::Write::write_str(&mut authenticated_role, "Supervisor");
-                                                } else {
-                                                    // 2. Check dynamic roles mathematically
-                                                    for entry in unsafe { &*core::ptr::addr_of!(ROLES) }.iter() {
-                                                        if let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&entry.pubkey) {
-                                                            if verifying_key.verify(signed_payload.as_bytes(), &sig).is_ok() {
-                                                            let mut cert_msg = heapless::String::<128>::new();
-                                                            use core::fmt::Write;
-                                                            let mut pk_hex = heapless::String::<64>::new();
-                                                            for b in entry.pubkey {
-                                                                let _ = write!(&mut pk_hex, "{:02x}", b);
-                                                            }
-                                                            let _ = write!(&mut cert_msg, "ROLE:{};PUBKEY:{}", entry.name, pk_hex);
-                                                            
-                                                            let mut sig_arr = [0u8; 64];
-                                                            sig_arr.copy_from_slice(&entry.cert_sig);
-                                                            let cert_sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
-                                                            
-                                                            if supervisor_verifying_key.verify(cert_msg.as_bytes(), &cert_sig).is_ok() {
-                                                                role_authorized = true;
-                                                                let _ = write!(&mut authenticated_role, "{}", entry.name);
-                                                                break;
-                                                            } else {
-                                                                info!("RAM Tampering Detected for role {}!", entry.name);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        
-                                        if role_authorized {
-                                            let role = &authenticated_role;
-                                            info!("Authenticated Command: {} (Role: {})", cmd, role);
-                                            
-                                            let outcome = commands::dispatch(cmd, role, is_supervisor, &mut parts, &mut dynamic_msg);
-                                            let allowed = outcome.allowed;
-                                            let color_name = outcome.color_name;
-                                            response_msg = outcome.response_msg;
-                                                    
-                                                    lcd.set_cursor_pos((0, 1));
-                                                    let mut status_str = heapless::String::<16>::new();
-                                                    use core::fmt::Write;
-                                                    
-                                                    if allowed {
-                                                        unsafe { LAST_TIMESTAMP = incoming_ts; }
-                                                        if response_msg == "Invalid Crypto Envelope" {
-                                                            response_msg = "Command Executed. (Sensors visible on local display)";
-                                                        }
-                                                        let _ = write!(&mut status_str, "{:<6} Pass   ", color_name);
-                                                        lcd.write_str_to_cur(&status_str);
-                                                        
-                                                        if cmd.starts_with(CMD_COLOR_RED) || cmd.starts_with(CMD_CLEAR_ALARM) {
-                                                            data = [colors::RED; 8];
-                                                        } else if cmd.starts_with(CMD_COLOR_YELLOW) || cmd.starts_with(CMD_SET_THRESHOLD) {
-                                                            data = [colors::YELLOW; 8];
-                                                        } else if cmd.starts_with(CMD_COLOR_GREEN) || cmd.starts_with(CMD_READ_SENSOR) {
-                                                            data = [colors::GREEN; 8];
-                                                        } else if cmd.starts_with(CMD_ADD_ROLE) || cmd.starts_with(CMD_REVOKE_ROLE) || cmd.starts_with(CMD_LIST_ROLES) || cmd.starts_with(CMD_WHOAMI) {
-                                                            data = [colors::BLUE; 8]; // Blue for system actions
-                                                        } else {
-                                                            data = [colors::WHITE; 8];
-                                                        }
-                                                        ws2812.write(data.iter().cloned()).unwrap();
-                                                        
-                                                        unsafe {
-                                                            COMMAND_OVERRIDE_COLOR = data;
-                                                            COMMAND_OVERRIDE_UNTIL = embassy_time::Instant::now().as_millis() + shared::terminology::COMMAND_LED_TIMEOUT_MS;
-                                                        }
-                                                    } else {
-                                                        if response_msg == "Invalid Crypto Envelope" {
-                                                            response_msg = "Permission Denied";
-                                                        }
-                                                        let _ = write!(&mut status_str, "{:<6} Reject ", color_name);
-                                                        lcd.write_str_to_cur(&status_str);
-                                                    }
-                                        } else {
-                                            response_msg = "Signature verification failed or Unknown Role";
-                                        }
-                                        } else {
-                                            response_msg = "Invalid Signature Format";
-                                        }
-                                    } else {
-                                        response_msg = "Replay Attack Detected";
-                                    }
-                                } else {
-                                    response_msg = "Invalid UTF-8 in payload";
-                                }
-                            } else {
-                                response_msg = "Decryption Failed";
-                            }
-                        } else {
-                            response_msg = "Payload too short";
-                        }
-                    }
-                    
-                    // Build, sign, and encrypt the response (see crypto.rs).
-                    let mut resp_message = heapless::String::<512>::new();
-                    {
-                        use core::fmt::Write as _;
-                        if !dynamic_msg.is_empty() {
-                            let _ = write!(&mut resp_message, "{}", dynamic_msg);
-                        } else {
-                            let _ = write!(&mut resp_message, "{}", response_msg);
-                        }
-                    }
-                    let final_response = crypto::build_signed_response(
-                        &resp_ts,
-                        &resp_message,
+                    let result = protocol::process_envelope(
+                        payload,
+                        &esp_x25519_secret,
                         &esp_signing_key,
-                        &ephemeral_pub_bytes,
                         &mut rng,
                     );
-
-                    http::write_response(&mut socket, &final_response).await;
+                    render(Render::Command(&result));
+                    http::write_response(&mut socket, &result.response).await;
                 }
                 _ => {}
             }
+            socket.close();
         }
-        socket.close();
+    }
+
+    // ---- UDP flavor: connectionless datagrams for native clients -----------
+    #[cfg(feature = "udp-transport")]
+    {
+        use embassy_net::udp::{PacketMetadata, UdpSocket};
+
+        let mut rx_meta = [PacketMetadata::EMPTY; 8];
+        let mut rx_buffer = [0; 4096];
+        let mut tx_meta = [PacketMetadata::EMPTY; 8];
+        let mut tx_buffer = [0; 4096];
+        let mut socket = UdpSocket::new(
+            stack,
+            &mut rx_meta,
+            &mut rx_buffer,
+            &mut tx_meta,
+            &mut tx_buffer,
+        );
+        socket.bind(SUPERVISOR_PORT).unwrap();
+        info!("UDP listening on :{}...", SUPERVISOR_PORT);
+
+        // Replies are framed as 1+ chunks of `[total][seq][payload]`, so a reply
+        // larger than one datagram (e.g. a many-role LIST_ROLES) still arrives:
+        // smoltcp does not IPv4-TX-fragment, so we fragment at the app layer and
+        // the client reassembles by `seq`. See docs/formal/UDP-TRANSPORT.md sec. 2.3.
+        const UDP_CHUNK_PAYLOAD: usize = 1024;
+        const UDP_FRAME_MAX: usize = UDP_CHUNK_PAYLOAD + 2;
+
+        let mut buf = [0u8; 2048];
+        loop {
+            // One datagram = one command. The idle sensor/LED runs on the 250ms
+            // timer branch while recv_from stays parked (same shape as the HTTP
+            // accept loop above).
+            let received = {
+                let mut recv = core::pin::pin!(socket.recv_from(&mut buf));
+                use embassy_futures::select::{select, Either};
+                match select(recv.as_mut(), Timer::after(Duration::from_millis(250))).await {
+                    Either::First(Ok((n, meta))) => Some((n, meta.endpoint)),
+                    Either::First(Err(e)) => {
+                        info!("UDP recv error: {:?}", e);
+                        None
+                    }
+                    Either::Second(_) => {
+                        render(Render::Idle);
+                        None
+                    }
+                }
+            };
+
+            if let Some((n, endpoint)) = received {
+                let payload = core::str::from_utf8(&buf[..n]).unwrap_or("");
+                info!("Received datagram ({} bytes) from {:?}", n, endpoint);
+                let result = protocol::process_envelope(
+                    payload,
+                    &esp_x25519_secret,
+                    &esp_signing_key,
+                    &mut rng,
+                );
+                render(Render::Command(&result));
+                // Send the reply as 1+ framed chunks (see the const comment
+                // above); the client reassembles by `seq` until it has `total`.
+                let bytes = result.response.as_bytes();
+                let total = bytes.len().div_ceil(UDP_CHUNK_PAYLOAD).max(1);
+                for (seq, chunk) in bytes.chunks(UDP_CHUNK_PAYLOAD).enumerate() {
+                    let mut frame = heapless::Vec::<u8, UDP_FRAME_MAX>::new();
+                    let _ = frame.push(total as u8);
+                    let _ = frame.push(seq as u8);
+                    let _ = frame.extend_from_slice(chunk);
+                    if let Err(e) = socket.send_to(&frame, endpoint).await {
+                        info!("UDP send error on chunk {}/{}: {:?}", seq + 1, total, e);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }

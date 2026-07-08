@@ -4,6 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+# Transport flavor -- mutually exclusive, enforced by a compile_error! in main.
+# `http-transport` (default) keeps the browser-reachable HTTP/1.1 endpoint;
+# `udp-transport` swaps it for a raw UDP datagram loop for native clients.
+# See docs/formal/UDP-TRANSPORT.md.
+default = ["http-transport"]
+http-transport = []
+# The UDP flavor authenticates clients with P-256 ECDSA (Secure Enclave / hardware
+# security keys), so it pulls in the p256 crate; the HTTP flavor stays Ed25519-only.
+udp-transport = ["dep:p256"]
+
 # Derive the device identity from a read-protected eFuse HMAC key via the
 # hardware HMAC-SHA256 peripheral (the key never leaves hardware). Requires the
 # eFuse key to be provisioned; OFF by default so dev builds keep the RNG/flash
@@ -13,6 +23,9 @@ efuse-hmac-identity = []
 [dependencies]
 shared = { path = "../shared" }
 ed25519-dalek = { version = "2.1.1", default-features = false }
+# P-256 ECDSA verification for the UDP flavor's client auth. Optional: only the
+# udp-transport build enables it (see [features]). no_std, verify-only.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa"], optional = true }
 postcard = "1.0"
 
 esp-backtrace = { version = "0.15.0", features = ["esp32s3", "panic-handler", "println"] }

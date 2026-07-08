@@ -1,0 +1,61 @@
+# xcodegen spec — generates CriticalInfra.xcodeproj (a real macOS+iOS .app that
+# links the local CriticalInfraKit package). Build it from the CLI:
+#
+#   brew install xcodegen
+#   cd clients/apple
+#   xcodegen generate
+#   xcodebuild -project CriticalInfra.xcodeproj -scheme CriticalInfra \
+#     -destination 'platform=macOS' build
+#
+# Passkeys additionally need Associated Domains: uncomment CODE_SIGN_ENTITLEMENTS
+# below once you have a registered App ID with that capability and an
+# apple-app-site-association file on your rp-id domain.
+name: CriticalInfra
+options:
+  bundleIdPrefix: infra.critical
+  createIntermediateGroups: true
+packages:
+  CriticalInfraKit:
+    path: .
+targets:
+  CriticalInfra:
+    type: application
+    supportedDestinations: [macOS, iOS]
+    deploymentTarget:
+      macOS: "15.0"
+      iOS: "18.0"
+    sources:
+      - path: AppSources
+    dependencies:
+      - package: CriticalInfraKit
+        product: CriticalInfraKit
+    # DEVELOPMENT_TEAM (and any other machine-local signing) comes from the
+    # git-ignored Local.xcconfig — copy Local.xcconfig.example → Local.xcconfig
+    # and set your team id. Keeps the team id out of the tracked repo.
+    configFiles:
+      Debug: Local.xcconfig
+      Release: Local.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: infra.critical.supervisor
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: Critical Infra
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        # The Secure Enclave signing key needs no special entitlement (a signed,
+        # non-sandboxed app can use its own enclave + keychain). No Associated
+        # Domains / passkeys on the native UDP flavor.
+
+# Explicit shared scheme so `xcodebuild -scheme CriticalInfra` and Xcode's Run
+# button both work headlessly.
+schemes:
+  CriticalInfra:
+    build:
+      targets:
+        CriticalInfra: all
+    run:
+      config: Debug
+    archive:
+      config: Release

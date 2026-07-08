@@ -16,13 +16,11 @@ pub struct Outcome {
     pub response_msg: &'static str,
 }
 
-/// `parts` is the raw `;`-split payload iterator (already advanced past the
-/// envelope fields); `dynamic_msg` receives any command-specific response text.
+/// `dynamic_msg` receives any command-specific response text.
 pub fn dispatch(
     cmd: &str,
     role: &str,
     is_supervisor: bool,
-    parts: &mut core::str::Split<'_, char>,
     dynamic_msg: &mut heapless::String<512>,
 ) -> Outcome {
     use core::fmt::Write as _;
@@ -37,14 +35,14 @@ pub fn dispatch(
         if let (Some(new_role), Some(new_pk_hex), Some(new_cert_hex)) =
             (cmd_parts.next(), cmd_parts.next(), cmd_parts.next())
         {
-            let mut new_pk = [0u8; 32];
+            let mut new_pk = heapless::Vec::<u8, 33>::new();
             let mut new_cert = heapless::Vec::<u8, 64>::new();
             let mut valid_parse = true;
 
-            if new_pk_hex.len() == 64 && new_cert_hex.len() == 128 {
-                for i in 0..32 {
+            if new_pk_hex.len() == crate::clientauth::CLIENT_PK_HEX_LEN && new_cert_hex.len() == 128 {
+                for i in 0..(crate::clientauth::CLIENT_PK_HEX_LEN / 2) {
                     if let Ok(b) = u8::from_str_radix(&new_pk_hex[i * 2..i * 2 + 2], 16) {
-                        new_pk[i] = b;
+                        let _ = new_pk.push(b);
                     } else {
                         valid_parse = false;
                     }
@@ -94,7 +92,14 @@ pub fn dispatch(
         }
     } else if cmd.starts_with(CMD_REVOKE_ROLE) {
         if role == ROLE_SUPERVISOR {
-            if let Some(target_role) = parts.next() {
+            // The revoke target lives inside the decrypted, signed command
+            // (e.g. "REVOKE_ROLE Operator") -- parse it here, not from an outer
+            // transport field. The old `parts.next()` read a 4th `;`-field of the
+            // raw HTTP body that the client never populated, so revoke silently
+            // no-op'd; UDP has no such field at all.
+            let mut cmd_parts = cmd.split_whitespace();
+            cmd_parts.next(); // skip REVOKE_ROLE
+            if let Some(target_role) = cmd_parts.next() {
                 let mut idx_to_remove = None;
                 let mut r_iter = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.iter().enumerate();
                 while let Some((i, r)) = r_iter.next() {
@@ -122,8 +127,8 @@ pub fn dispatch(
             } else {
                 let _ = write!(dynamic_msg, "ROLES:");
                 for r in roles_ref.iter() {
-                    let mut pk_hex = heapless::String::<64>::new();
-                    for b in r.pubkey {
+                    let mut pk_hex = heapless::String::<66>::new();
+                    for b in &r.pubkey {
                         let _ = write!(&mut pk_hex, "{:02x}", b);
                     }
                     let _ = write!(dynamic_msg, "{}:{},", r.name, pk_hex);
@@ -133,7 +138,9 @@ pub fn dispatch(
             color_name = "System";
         }
     } else if cmd.starts_with(CMD_READ_SENSOR) {
-        if role == ROLE_OBSERVER || role == ROLE_OPERATOR || role == ROLE_ADMIN || role == ROLE_SUPERVISOR {
+        // Supervisor is the role authority only (ADD/LIST/REVOKE) -- it does not
+        // operate the device, so it is intentionally NOT in the operational lists.
+        if role == ROLE_OBSERVER || role == ROLE_OPERATOR || role == ROLE_ADMIN {
             allowed = true;
             color_name = "Green";
             if unsafe { ALARM_ACTIVE } {
@@ -143,7 +150,7 @@ pub fn dispatch(
             }
         }
     } else if cmd.starts_with(CMD_SET_THRESHOLD) {
-        if role == ROLE_OPERATOR || role == ROLE_ADMIN || role == ROLE_SUPERVISOR {
+        if role == ROLE_OPERATOR || role == ROLE_ADMIN {
             let mut cmd_parts = cmd.split_whitespace();
             cmd_parts.next();
             if let Some(val_str) = cmd_parts.next() {
@@ -161,7 +168,7 @@ pub fn dispatch(
             }
         }
     } else if cmd.starts_with(CMD_CLEAR_ALARM) {
-        if role == ROLE_ADMIN || role == ROLE_SUPERVISOR {
+        if role == ROLE_ADMIN {
             unsafe {
                 ALARM_ACTIVE = false;
             }
