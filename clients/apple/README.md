@@ -20,8 +20,8 @@ This is reference client #1 for the wire protocol in
   `DeviceClient`, `DeviceConfig`, `Commands`, and the `EnclaveSigner`
   (`CommandSigner`). No SwiftUI.
 - **`AppSources/`** — the **Xcode app target** (SwiftUI views, `AppModel`,
-  `@main`). Owned by the app, *not* the package, so Xcode Previews work. Built
-  via `project.yml` → `xcodegen` → `xcodebuild`.
+  `@main`). Owned by the app, *not* the package, so Xcode Previews work. Managed
+  as a plain Xcode project (`CriticalInfra.xcodeproj`) — no code generation.
 
 ## Verify the core
 
@@ -33,22 +33,20 @@ swift test        # includes the P-256 ⇄ firmware interop round-trip
 
 ## Build & run the app
 
+Open the Xcode project and run on **My Mac**:
+
 ```sh
-brew install xcodegen                     # once
 cd clients/apple
-cp Local.xcconfig.example Local.xcconfig   # set your DEVELOPMENT_TEAM (git-ignored)
-xcodegen generate
-open CriticalInfra.xcodeproj               # ⌘R to run  (destination: My Mac)
-# or headless:
-xcodebuild -project CriticalInfra.xcodeproj -scheme CriticalInfra \
-  -destination 'platform=macOS' build
+open CriticalInfra.xcodeproj    # ⌘R to run (destination: My Mac)
 ```
+
+Set your signing team once under **Target → Signing & Capabilities → Team** — the
+app must be **signed** to use the Secure Enclave / Touch ID (an ad-hoc/unsigned
+binary can't). For a standalone double-clickable app: **Product → Archive →
+Distribute App → Custom → Copy App**.
 
 On the first UDP send, macOS prompts for **Local Network** access — allow it, or
 datagrams are dropped (System Settings → Privacy & Security → Local Network).
-
-> Run the **Xcode-built (signed) app** to exercise the Secure Enclave — an
-> ad-hoc/unsigned binary can't use the enclave or Touch ID.
 
 ## Demo flow (no domains, no passkeys)
 

@@ -2,5 +2,3 @@
 .swiftpm/
 *.xcodeproj
 DerivedData/
-# Machine-local signing (team id) — never commit
-Local.xcconfig

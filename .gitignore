@@ -21,3 +21,6 @@ proxy.log
 supervisor-web/dist
 
 # Local per-machine config (personal LAN IP)
+
+# Exported macOS .app (double-clickable build artifact — keep out of the repo)
+/CriticalInfra/

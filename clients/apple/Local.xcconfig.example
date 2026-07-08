@@ -1,4 +1,0 @@
-// Copy this file to `Local.xcconfig` (which is git-ignored) and set your Apple
-// Developer Team ID. project.yml references Local.xcconfig for signing, so your
-// team id stays out of the tracked repo.
-DEVELOPMENT_TEAM = YOUR_TEAM_ID
