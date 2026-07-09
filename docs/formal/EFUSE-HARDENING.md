@@ -75,7 +75,13 @@ openssl rsa -pubin -inform DER -in sb_pub.der -pubout -out sb_pub.pem
 **Enroll a backup before you burn.** An on-card key can't be exported — lose the
 token after `SECURE_BOOT_EN` and you can never sign firmware for those devices
 again. Generate a *second* on-card key on a backup token and enroll its digest too
-(Secure Boot v2 trusts up to 3).
+(Secure Boot v2 trusts up to 3). Validated here with a **Token2** (`DIGEST0`,
+primary) and a **Thetis** (`DIGEST1`, backup) PIV RSA-3072 key — each signs *and*
+verifies a Secure Boot v2 image.
+
+*OpenSC driver quirk:* some cards aren't auto-detected as PIV — the Thetis reports
+*"Unsupported card"* until you force the driver, so prefix **`OPENSC_DRIVER=PIV-II`**
+on the `espsecure` / `pkcs11-tool` calls (the Token2 doesn't need it).
 
 **Sign (validated):**
 ```sh

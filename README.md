@@ -75,6 +75,16 @@ Every part is in a single kit — the [Freenove Ultimate Starter Kit for ESP32-S
 - I2C LCD (address `0x27`) → SDA **GPIO 8**, SCL **GPIO 9**
 - DHT11 → DATA on **GPIO 21**, with a **10 kΩ pull-up** between DATA and VCC (3V3)
 
+#### Security hardware (optional — for the hardware-key + secure-boot demo)
+
+| Item | Role | Link |
+|---|---|---|
+| **Token2 T2F2 PIN+** (Release 3.3, USB-C) | Supervisor identity (ECC P-256, PIV slot 9c) **+** primary Secure Boot v2 signer (RSA-3072, PIV slot 9a) | [token2.com](https://www.token2.com/shop/product/t2f2-pin-release3-typec) |
+| **Thetis Pro FIDO2 Security Key** | Backup Secure Boot v2 signer (RSA-3072, PIV) | [amazon.de](https://www.amazon.de/dp/B0DPR855Q7) |
+| **keyroost** (software) | Generates ECC/RSA keys **on-card** in PIV slots — used to provision both keys above | [github.com/framefilter/keyroost](https://github.com/framefilter/keyroost) |
+
+Both are standard **PIV** smart cards reached via OpenSC PKCS#11. A Mac's Secure Enclave also works for the *supervisor* (Touch ID), but can't hold the RSA-3072 secure-boot key (P-256 only). Details in [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md).
+
 ### Prerequisites
 
 - Rust + the Espressif toolchain via [`espup`](https://github.com/esp-rs/espup): `espup install`, then `source ~/export-esp.sh` (used only for the firmware; the toolchain is pinned by `rust-toolchain.toml`)
