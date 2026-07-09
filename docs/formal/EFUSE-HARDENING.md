@@ -106,7 +106,8 @@ signature that `verify-signature` accepts.
 second-stage bootloader must also be signed and verified, i.e. building the
 **ESP-IDF bootloader** (not the bare esp-hal image espflash produces), then the
 irreversible `SECURE_BOOT_DIGEST0` + `SECURE_BOOT_EN` burns. Do it last, on a final
-image, with a backup key enrolled.
+image, with a backup key enrolled — the staged runbook is in
+[`SECURE-BOOT-V2.md`](./SECURE-BOOT-V2.md).
 
 ## What the ESP32-S3 offers for eFuse-bound crypto
 

@@ -165,6 +165,8 @@ The full **hardware-validated** runbook — HMAC identity root → JTAG off → 
 
 > ⚠️ eFuse writes are **irreversible** (bits only go 0 → 1). Rehearse with `./efuse-harden.sh rehearse`, verify between stages, and leave the read-lock (`ENABLE_SECURITY_DOWNLOAD`) and Secure Boot for last.
 
+**Secure Boot v2** (only signed firmware boots) is a further, brick-prone step — the RSA-3072 signing is validated (Token2 + Thetis via PKCS#11/HSM), and the staged enablement runbook is in [`docs/formal/SECURE-BOOT-V2.md`](docs/formal/SECURE-BOOT-V2.md).
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
