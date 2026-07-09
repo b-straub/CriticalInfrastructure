@@ -164,6 +164,8 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(net::connection(_controller)).unwrap();
     spawner.spawn(net::net_task(runner)).unwrap();
+    #[cfg(feature = "ota-net")]
+    spawner.spawn(ota::server_task(stack)).unwrap();
 
     if let Some(saved_roles) = storage::load_roles() {
         unsafe {

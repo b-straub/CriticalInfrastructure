@@ -25,6 +25,12 @@ efuse-hmac-identity = []
 # See docs/formal/OTA.md step 4.2. Never enable in a production image.
 ota-selftest = []
 
+# Network OTA: run a TCP server (:8081) that receives a length-prefixed signed image
+# and installs it into the inactive slot. See docs/formal/OTA.md step 4.3. The port is
+# currently unauthenticated (Secure Boot is the integrity backstop) — gating it via the
+# supervisor channel is a follow-up.
+ota-net = []
+
 [dependencies]
 shared = { path = "../shared" }
 ed25519-dalek = { version = "2.1.1", default-features = false }

@@ -50,8 +50,9 @@ offset** (`0xc000`) — set in `secure-boot/sdkconfig.defaults`
    an A/B table and honors `otadata` slot selection. **No network code.**
 2. **Apply path in-app** — ✅ done. `OtaUpdater`: `next_partition()` → write image →
    `activate_next_partition()` → set `New` → reboot → self-test → `set_current_ota_state(Valid)`.
-3. **Transport** — stream the ~0.9 MB signed image over TCP (`embassy-net`, `tcp`
-   already enabled); authorize + trigger + expected SHA-256 on the existing channel.
+3. **Transport** — ✅ done. Stream the signed image over TCP (`embassy-net`) into the
+   inactive slot; Secure Boot verifies it on boot. (Authorization via the supervisor
+   channel + anti-rollback are the remaining hardening — see below.)
 4. **Move persistent state** — switch `storage.rs` (and the non-eFuse `identity.rs`
    seed) from absolute offsets to partition-table lookup, freeing the `storage` region.
 5. **Flash encryption** — dev mode on a spare, validate encrypted OTA writes, then
@@ -127,6 +128,33 @@ Two gotchas found + fixed here (both real, both would bite a network OTA too):
 
 > The self-test build stays resident in `ota_1` afterward (fully functional). Reflash a
 > plain build (`provision/5-flash-app.sh`) to drop the `ota-selftest` behavior.
+
+## Phase 3 runbook — network delivery (4.3)
+
+Build the app with the **`ota-net`** feature: it runs a TCP server on **:8081** that
+receives a length-prefixed signed image (`[u32 LE length][image]`), streams it into the
+inactive slot via `OtaUpdater`, activates it, and resets. **`provision/ota-push.sh`**
+sends the image from the host over Wi-Fi.
+
+```sh
+# on the device: build+sign with ota-net, flash to a slot, boot it (note its "Got IP")
+provision/3-build-sign.sh --ssid <S> --pass <P> --supervisor <K> --keys token2 \
+  --features "udp-transport,efuse-hmac-identity,ota-net" --skip-bootloader
+esptool --chip esp32s3 --port <PORT> --after no-reset write-flash 0x20000 secure-boot/out/app-signed.bin
+provision/ota-switch-slot.sh --port <PORT> --slot 0
+
+# from the host: push it over the network
+provision/ota-push.sh --host <device-ip> --image secure-boot/out/app-signed.bin
+```
+> ✅ **Verified on hardware:** device on `ota_0` listening on `:8081`; pushed 876 544
+> bytes over TCP; device installed into `ota_1`, activated, rebooted to
+> `App(Ota1) @ 0x230000`, and stayed there (confirmed `Valid`). No USB cable.
+
+**Security (deferred, tracked):** `:8081` is unauthenticated. Secure Boot is the
+integrity backstop — a tampered/garbage image won't boot and rolls back — but a LAN
+attacker could force reboots or push an older *validly signed* image. Next: gate the
+trigger through the authenticated supervisor channel, and add anti-rollback
+(`SECURE_VERSION`).
 
 ## Open items to confirm on hardware
 

@@ -12,12 +12,14 @@ use esp_bootloader_esp_idf::{ota::OtaImageState, ota_updater::OtaUpdater, partit
 use esp_storage::FlashStorage;
 use log::info;
 
+#[cfg(any(feature = "ota-selftest", feature = "ota-net"))]
+use embedded_storage::Storage;
 #[cfg(feature = "ota-selftest")]
-use embedded_storage::{ReadStorage, Storage};
+use embedded_storage::ReadStorage;
 #[cfg(feature = "ota-selftest")]
 use esp_bootloader_esp_idf::partitions::{AppPartitionSubType, PartitionType};
 
-#[cfg(feature = "ota-selftest")]
+#[cfg(any(feature = "ota-selftest", feature = "ota-net"))]
 const SECTOR: usize = 4096;
 /// Total length of the Secure-Boot-signed app image at `base`: walk the esp_image
 /// header + segments + checksum + optional hash + the appended signature block. Copying
@@ -147,4 +149,119 @@ pub fn maybe_self_copy_test() {
     }
     info!("OTA selftest: activated new slot (New); resetting into it...");
     esp_hal::system::software_reset();
+}
+
+// ---- 4.3: network delivery over TCP (feature `ota-net`) -----------------------
+//
+// SECURITY NOTE: this port is currently unauthenticated. Secure Boot is the integrity
+// backstop — a tampered/garbage image simply won't boot and rolls back — but an
+// attacker on the LAN could still force reboots or push an older *validly signed*
+// image (rollback). Gating the trigger through the authenticated supervisor channel
+// (and anti-rollback / SECURE_VERSION) is the next hardening step.
+
+/// TCP OTA server: accept on :8081, receive a length-prefixed signed image
+/// (`[u32 LE length][image bytes]`), stream it into the inactive slot via
+/// `OtaUpdater`, activate it (`New`), and reset. `confirm_if_pending` marks it `Valid`
+/// on the next boot. See docs/formal/OTA.md step 4.3.
+#[cfg(feature = "ota-net")]
+#[embassy_executor::task]
+pub async fn server_task(stack: embassy_net::Stack<'static>) {
+    use embassy_net::tcp::TcpSocket;
+    use embassy_time::{Duration, Timer};
+    static RX: static_cell::StaticCell<[u8; 4096]> = static_cell::StaticCell::new();
+    static TX: static_cell::StaticCell<[u8; 2048]> = static_cell::StaticCell::new();
+    let rx = RX.init([0u8; 4096]);
+    let tx = TX.init([0u8; 2048]);
+    loop {
+        let mut sock = TcpSocket::new(stack, &mut rx[..], &mut tx[..]);
+        sock.set_timeout(Some(Duration::from_secs(20)));
+        info!("OTA: TCP listening on :8081 for a signed image");
+        if let Err(e) = sock.accept(8081).await {
+            info!("OTA: accept error: {:?}", e);
+            continue;
+        }
+        match receive_and_install(&mut sock).await {
+            Ok(n) => {
+                info!("OTA: received {} bytes, activated new slot; resetting...", n);
+                Timer::after(Duration::from_millis(50)).await;
+                esp_hal::system::software_reset();
+            }
+            Err(e) => {
+                info!("OTA: transfer aborted: {}", e);
+                sock.abort();
+                Timer::after(Duration::from_millis(50)).await;
+            }
+        }
+    }
+}
+
+/// Receive a length-prefixed image from `sock` and install it into the inactive slot.
+/// Returns the number of image bytes written.
+#[cfg(feature = "ota-net")]
+async fn receive_and_install(
+    sock: &mut embassy_net::tcp::TcpSocket<'_>,
+) -> Result<u32, &'static str> {
+    let mut lenb = [0u8; 4];
+    read_exact(sock, &mut lenb).await?;
+    let total = u32::from_le_bytes(lenb);
+
+    let mut flash = FlashStorage::new();
+    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
+    let mut updater = OtaUpdater::new(&mut flash, &mut buf).map_err(|_| "no A/B layout")?;
+    let (mut region, slot) = updater.next_partition().map_err(|_| "next_partition")?;
+    if total == 0 || total > region.partition_size() as u32 {
+        return Err("bad image length");
+    }
+    info!("OTA: receiving {} bytes into {:?}", total, slot);
+
+    // Stream into flash, buffering to full sectors (esp-storage erases per sector).
+    let mut sector = [0u8; SECTOR];
+    let mut filled = 0usize;
+    let mut written = 0u32;
+    let mut remaining = total as usize;
+    while remaining > 0 {
+        let want = core::cmp::min(SECTOR - filled, remaining);
+        let n = sock
+            .read(&mut sector[filled..filled + want])
+            .await
+            .map_err(|_| "socket read")?;
+        if n == 0 {
+            return Err("connection closed early");
+        }
+        filled += n;
+        remaining -= n;
+        if filled == SECTOR {
+            region.write(written, &sector).map_err(|_| "flash write")?;
+            written += SECTOR as u32;
+            filled = 0;
+        }
+    }
+    if filled > 0 {
+        for b in sector[filled..].iter_mut() {
+            *b = 0xFF; // pad the final partial sector, matching a flashed image
+        }
+        region.write(written, &sector).map_err(|_| "flash write")?;
+    }
+
+    drop(region); // release the &mut on the updater before activating
+    updater.activate_next_partition().map_err(|_| "activate")?;
+    updater.set_current_ota_state(OtaImageState::New).map_err(|_| "set New")?;
+    Ok(total)
+}
+
+/// Read exactly `buf.len()` bytes or fail.
+#[cfg(feature = "ota-net")]
+async fn read_exact(
+    sock: &mut embassy_net::tcp::TcpSocket<'_>,
+    buf: &mut [u8],
+) -> Result<(), &'static str> {
+    let mut got = 0;
+    while got < buf.len() {
+        let n = sock.read(&mut buf[got..]).await.map_err(|_| "socket read")?;
+        if n == 0 {
+            return Err("connection closed early");
+        }
+        got += n;
+    }
+    Ok(())
 }
