@@ -46,19 +46,36 @@ $ pkcs11-tool --module /opt/homebrew/lib/opensc-pkcs11.so -M | grep -i pss
 PIV RSA is a raw modexp on host-padded input, so the PSS encoding happens
 host-side — the same reason a YubiKey PIV works as the reference HSM.
 
-**Provision (PIV slot 9a, leaving 9c for the supervisor):** the Companion App can't
-*generate* 3072 for PIV, so generate off-card and **import**:
+**Provision the key (PIV slot 9a, leaving 9c for the supervisor).**
+
+*Preferred — on-card generation (never leaves hardware).* A PIV tool with on-card
+RSA keygen (e.g. **keyroost**) generates the RSA-3072 key + cert **directly in slot
+9a** — the private key never exists off-card. The cert CN is cosmetic (Secure Boot
+verifies the raw public key, not the cert), e.g. `CN=ESP32-S3 Secure Boot Signer`.
+OpenSC itself can't generate PIV keys (`Generate RSA mechanism not supported`), so a
+dedicated tool is used.
+
+*Fallback — off-card generate + import* (only if on-card keygen isn't available):
 ```sh
 openssl genrsa -out sb_key.pem 3072
 openssl req -new -x509 -key sb_key.pem -sha256 -days 7300 \
   -subj "/CN=ESP32-S3 Secure Boot Signer" -out sb_cert.pem
 openssl pkcs12 -export -inkey sb_key.pem -in sb_cert.pem -out sb_key.p12 -passout pass:CHANGEME
-#  → import sb_key.p12 into PIV slot 9a via the Token2 Companion App, then:
-rm -P sb_key.pem sb_key.p12        # destroy the off-card copy — key is now hardware-bound
+#  → import sb_key.p12 into slot 9a (Token2 Companion App), then destroy the copy:
+rm -P sb_key.pem sb_key.p12        # macOS overwrite+delete (Linux: shred -u)
 ```
-The private key existed off-card only during generation/import; afterwards it's
-card-only. Since it's then unrecoverable, **enroll a second key's digest for
-backup** (Secure Boot v2 trusts up to 3) rather than keeping an off-card copy.
+Prefer on-card generation — the imported key existed off-card during generation.
+
+**Read the on-card public key** (for the verify + digest steps below):
+```sh
+pkcs11-tool --module /opt/homebrew/lib/opensc-pkcs11.so --read-object --type pubkey --id 01 -o sb_pub.der
+openssl rsa -pubin -inform DER -in sb_pub.der -pubout -out sb_pub.pem
+```
+
+**Enroll a backup before you burn.** An on-card key can't be exported — lose the
+token after `SECURE_BOOT_EN` and you can never sign firmware for those devices
+again. Generate a *second* on-card key on a backup token and enroll its digest too
+(Secure Boot v2 trusts up to 3).
 
 **Sign (validated):**
 ```sh
