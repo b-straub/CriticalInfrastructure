@@ -16,7 +16,7 @@ use log::info;
 use embedded_storage::Storage;
 #[cfg(feature = "ota-selftest")]
 use embedded_storage::ReadStorage;
-#[cfg(feature = "ota-selftest")]
+#[cfg(any(feature = "ota-selftest", feature = "ota-net"))]
 use esp_bootloader_esp_idf::partitions::{AppPartitionSubType, PartitionType};
 
 #[cfg(any(feature = "ota-selftest", feature = "ota-net"))]
@@ -195,6 +195,57 @@ pub async fn server_task(stack: embassy_net::Stack<'static>) {
     }
 }
 
+/// Aligned scratch sector — `esp_rom_spiflash_write_encrypted` takes `*mut u32` and
+/// rewrites the buffer in place, so it must be 4-byte aligned.
+#[cfg(feature = "ota-net")]
+#[repr(align(4))]
+struct AlignedSector([u8; SECTOR]);
+
+/// The slot `OtaUpdater` would activate next, plus its absolute flash base and size.
+#[cfg(feature = "ota-net")]
+fn target_slot() -> Result<(AppPartitionSubType, u32, u32), &'static str> {
+    let mut flash = FlashStorage::new();
+    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
+    let slot = {
+        let mut updater = OtaUpdater::new(&mut flash, &mut buf).map_err(|_| "no A/B layout")?;
+        updater.next_partition().map_err(|_| "next_partition")?.1
+    };
+    let table = partitions::read_partition_table(&mut flash, &mut buf).map_err(|_| "read table")?;
+    let p = table
+        .find_partition(PartitionType::App(slot))
+        .map_err(|_| "find slot")?
+        .ok_or("slot not found")?;
+    Ok((slot, p.offset(), p.len()))
+}
+
+/// Activate the next slot and mark it `New` (`confirm_if_pending` -> `Valid` on boot).
+#[cfg(feature = "ota-net")]
+fn activate_next() -> Result<(), &'static str> {
+    let mut flash = FlashStorage::new();
+    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
+    let mut updater = OtaUpdater::new(&mut flash, &mut buf).map_err(|_| "no A/B layout")?;
+    updater.activate_next_partition().map_err(|_| "activate")?;
+    updater.set_current_ota_state(OtaImageState::New).map_err(|_| "set New")?;
+    Ok(())
+}
+
+/// Write one sector to an absolute flash address, encrypted iff flash encryption is on.
+/// The non-encrypted path is byte-identical to the FlashRegion write used since 4.3
+/// (FlashRegion.write(off) == FlashStorage.write(base + off)).
+#[cfg(feature = "ota-net")]
+fn put_sector(
+    fs: &mut FlashStorage,
+    addr: u32,
+    buf: &mut [u8; SECTOR],
+    encrypted: bool,
+) -> Result<(), &'static str> {
+    if encrypted {
+        flash_enc::write_sector(addr, buf)
+    } else {
+        fs.write(addr, &buf[..]).map_err(|_| "flash write")
+    }
+}
+
 /// Receive a length-prefixed image from `sock` and install it into the inactive slot.
 /// Returns the number of image bytes written.
 #[cfg(feature = "ota-net")]
@@ -205,24 +256,32 @@ async fn receive_and_install(
     read_exact(sock, &mut lenb).await?;
     let total = u32::from_le_bytes(lenb);
 
-    let mut flash = FlashStorage::new();
-    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
-    let mut updater = OtaUpdater::new(&mut flash, &mut buf).map_err(|_| "no A/B layout")?;
-    let (mut region, slot) = updater.next_partition().map_err(|_| "next_partition")?;
-    if total == 0 || total > region.partition_size() as u32 {
+    let (slot, base, size) = target_slot()?;
+    if total == 0 || total > size {
         return Err("bad image length");
     }
-    info!("OTA: receiving {} bytes into {:?}", total, slot);
+    // On a flash-encrypted board the app image must be stored *encrypted* (the bootloader
+    // decrypts it via the MMU at boot). otadata/storage stay plaintext, so this app-slot
+    // write is the only path that changes. FE is detected at runtime, so this build is
+    // identical to 4.3 on a non-encrypted board.
+    let encrypted = esp_hal::efuse::Efuse::flash_encryption();
+    info!(
+        "OTA: receiving {} bytes into {:?} @ {:#x}{}",
+        total,
+        slot,
+        base,
+        if encrypted { " [encrypted]" } else { "" }
+    );
 
-    // Stream into flash, buffering to full sectors (esp-storage erases per sector).
-    let mut sector = [0u8; SECTOR];
+    let mut fs = FlashStorage::new();
+    let mut sector = AlignedSector([0u8; SECTOR]);
     let mut filled = 0usize;
     let mut written = 0u32;
     let mut remaining = total as usize;
     while remaining > 0 {
         let want = core::cmp::min(SECTOR - filled, remaining);
         let n = sock
-            .read(&mut sector[filled..filled + want])
+            .read(&mut sector.0[filled..filled + want])
             .await
             .map_err(|_| "socket read")?;
         if n == 0 {
@@ -231,22 +290,54 @@ async fn receive_and_install(
         filled += n;
         remaining -= n;
         if filled == SECTOR {
-            region.write(written, &sector).map_err(|_| "flash write")?;
+            put_sector(&mut fs, base + written, &mut sector.0, encrypted)?;
             written += SECTOR as u32;
             filled = 0;
         }
     }
     if filled > 0 {
-        for b in sector[filled..].iter_mut() {
+        for b in sector.0[filled..].iter_mut() {
             *b = 0xFF; // pad the final partial sector, matching a flashed image
         }
-        region.write(written, &sector).map_err(|_| "flash write")?;
+        put_sector(&mut fs, base + written, &mut sector.0, encrypted)?;
     }
 
-    drop(region); // release the &mut on the updater before activating
-    updater.activate_next_partition().map_err(|_| "activate")?;
-    updater.set_current_ota_state(OtaImageState::New).map_err(|_| "set New")?;
+    activate_next()?;
     Ok(total)
+}
+
+/// Encrypted flash writes for OTA app slots under flash encryption. Reached only when
+/// `Efuse::flash_encryption()` is true. NOT bench-verifiable (needs a flash-encrypted
+/// board) — validated in the 4.5 spare-board session; see docs/formal/OTA.md.
+#[cfg(feature = "ota-net")]
+mod flash_enc {
+    // Linked from the ESP32-S3 ROM via esp-rom-sys's rom.ld.
+    extern "C" {
+        fn esp_rom_spiflash_erase_sector(sector: u32) -> i32;
+        fn esp_rom_spiflash_write_encrypted_enable();
+        fn esp_rom_spiflash_write_encrypted_disable();
+        fn esp_rom_spiflash_write_encrypted(addr: u32, data: *mut u32, len: u32) -> i32;
+    }
+
+    /// Erase + encrypted-write one 4096-byte sector at `addr` (4096-aligned). `buf` is
+    /// 4-byte aligned and rewritten in place by the ROM. In a critical section, as
+    /// esp-storage does for plain writes; sector-sized addr/len meet the ROM's 32-byte
+    /// alignment requirement.
+    pub(super) fn write_sector(addr: u32, buf: &mut [u8; 4096]) -> Result<(), &'static str> {
+        critical_section::with(|_| unsafe {
+            if esp_rom_spiflash_erase_sector(addr / 4096) != 0 {
+                return Err("erase");
+            }
+            esp_rom_spiflash_write_encrypted_enable();
+            let rc = esp_rom_spiflash_write_encrypted(addr, buf.as_mut_ptr() as *mut u32, 4096);
+            esp_rom_spiflash_write_encrypted_disable();
+            if rc == 0 {
+                Ok(())
+            } else {
+                Err("encrypted write")
+            }
+        })
+    }
 }
 
 /// Read exactly `buf.len()` bytes or fail.

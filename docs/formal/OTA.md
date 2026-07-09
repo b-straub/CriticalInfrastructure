@@ -59,8 +59,9 @@ offset** (`0xc000`) — set in `secure-boot/sdkconfig.defaults`
    build wrote. (`identity.rs`'s flash seed is `#[cfg(not(efuse-hmac-identity))]` — dev-only,
    not compiled on the hardened board — so it keeps its address to avoid breaking dev boards
    whose default table has no `storage` partition.)
-5. **Flash encryption** — dev mode on a spare, validate encrypted OTA writes, then
-   Release. Closes [`SECURE-BOOT-V2.md`](./SECURE-BOOT-V2.md) Phase C.
+5. **Flash encryption** — 🔨 encrypted-write path implemented (bench, runtime-gated).
+   Remaining: partition encryption flags + dev-mode enable on a spare + validate
+   encrypted OTA, then Release. Closes [`SECURE-BOOT-V2.md`](./SECURE-BOOT-V2.md) Phase C.
 
 ---
 
@@ -159,6 +160,44 @@ integrity backstop — a tampered/garbage image won't boot and rolls back — bu
 attacker could force reboots or push an older *validly signed* image. Next: gate the
 trigger through the authenticated supervisor channel, and add anti-rollback
 (`SECURE_VERSION`).
+
+## Phase 5 — flash encryption (4.5, in progress)
+
+**Design (what's encrypted vs plaintext).** On an encrypted board the flash controller
+decrypts MMU-mapped reads but `esp-storage` reads *raw SPI* (ciphertext). So:
+
+| Region | Encrypted? | Why |
+|--------|-----------|-----|
+| bootloader, partition table, `ota_0`/`ota_1` | **yes** (mandatory) | the bootloader/MMU decrypt them at boot |
+| `otadata` | **no** (plaintext) | the OTA crate reads/writes it via raw SPI |
+| `storage`, `nvs`, `phy_init` | **no** (plaintext) | `storage.rs` reads/writes via raw SPI |
+
+Keeping `otadata`/`storage` plaintext means the **only** write that must change is the
+OTA app-image write. (Their contents aren't secret — slot pointer, supervisor-signed
+roles, a threshold.)
+
+**Encrypted-write path (implemented, `src/ota.rs`).** The OTA write detects flash
+encryption at runtime (`Efuse::flash_encryption()`); when on, it erases + writes each
+app-slot sector with the ROM's `esp_rom_spiflash_write_encrypted`; when off, the normal
+path (byte-identical to 4.3). Network OTA feeds a **plaintext** image (from TCP) →
+encrypt-on-write. The 4.2 *self-copy* can't work under FE (raw source read = ciphertext)
+— test-only, and documented as such.
+
+> **Status: bench.** Compiles for all feature combos; on a non-encrypted board it is
+> identical to 4.3 (the encrypted branch is dormant). The encrypted branch — the ROM
+> `enable → write → disable` sequence, the cache/critical-section behavior, and the
+> partition encryption flags — is **not bench-verifiable** and gets validated in the
+> spare-board session below.
+
+**Remaining (spare board, irreversible — dev mode first):**
+1. Mark app partitions encrypted / `otadata`+`storage` plaintext (partition-table flags),
+   and set `CONFIG_SECURE_FLASH_ENC_ENABLED=y` + **Development** mode in the bootloader.
+2. Enable flash encryption on a **spare** (dev mode keeps a limited number of plaintext
+   reflashes as an escape hatch).
+3. Validate: normal boot works; then a **network OTA** installs + boots a new slot (the
+   encrypted-write branch, live). Fix the ROM sequence here if needed.
+4. Only then consider **Release** mode (permanently disables plaintext serial flashing —
+   OTA becomes the sole update path, which is why we built it first).
 
 ## Open items to confirm on hardware
 
