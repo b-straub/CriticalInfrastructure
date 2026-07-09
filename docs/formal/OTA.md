@@ -53,8 +53,12 @@ offset** (`0xc000`) — set in `secure-boot/sdkconfig.defaults`
 3. **Transport** — ✅ done. Stream the signed image over TCP (`embassy-net`) into the
    inactive slot; Secure Boot verifies it on boot. (Authorization via the supervisor
    channel + anti-rollback are the remaining hardening — see below.)
-4. **Move persistent state** — switch `storage.rs` (and the non-eFuse `identity.rs`
-   seed) from absolute offsets to partition-table lookup, freeing the `storage` region.
+4. **Move persistent state** — ✅ done. `storage.rs` locates the `storage` partition by
+   name from the table (no hardcoded `0x200000`); missing → persistence disabled + logged
+   (no guessed address). Verified over OTA: the 4.4 build read the roles/threshold the old
+   build wrote. (`identity.rs`'s flash seed is `#[cfg(not(efuse-hmac-identity))]` — dev-only,
+   not compiled on the hardened board — so it keeps its address to avoid breaking dev boards
+   whose default table has no `storage` partition.)
 5. **Flash encryption** — dev mode on a spare, validate encrypted OTA writes, then
    Release. Closes [`SECURE-BOOT-V2.md`](./SECURE-BOOT-V2.md) Phase C.
 
