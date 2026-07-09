@@ -30,6 +30,7 @@ mod crypto;
 mod http;
 mod identity;
 mod net;
+mod ota;
 mod protocol;
 mod sensor;
 mod state;
@@ -77,6 +78,11 @@ async fn main(spawner: Spawner) {
             Err(e) => info!("OTA: partition-table read error {:?}", e),
         }
     }
+
+    // OTA: confirm a freshly-activated slot, and (test builds) run the self-copy once.
+    ota::confirm_if_pending();
+    #[cfg(feature = "ota-selftest")]
+    ota::maybe_self_copy_test();
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);

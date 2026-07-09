@@ -20,6 +20,11 @@ udp-transport = ["dep:p256"]
 # path. See docs/formal/EFUSE-HARDENING.md.
 efuse-hmac-identity = []
 
+# Test-only: on boot from ota_0, self-copy the running image into the inactive OTA
+# slot, activate it, and reset — exercises the OTA apply path with no network.
+# See docs/formal/OTA.md step 4.2. Never enable in a production image.
+ota-selftest = []
+
 [dependencies]
 shared = { path = "../shared" }
 ed25519-dalek = { version = "2.1.1", default-features = false }

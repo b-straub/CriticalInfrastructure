@@ -46,10 +46,9 @@ offset** (`0xc000`) — set in `secure-boot/sdkconfig.defaults`
 
 ## Phased plan
 
-1. **A/B boot proof** *(this doc's runbook — spare board)* — prove the secure-boot
-   bootloader boots an esp-hal image from an A/B table and honors `otadata` slot
-   selection. **No network code.**
-2. **Apply path in-app** — wire `OtaUpdater`: `next_partition()` → write image →
+1. **A/B boot proof** — ✅ done. The secure-boot bootloader boots an esp-hal image from
+   an A/B table and honors `otadata` slot selection. **No network code.**
+2. **Apply path in-app** — ✅ done. `OtaUpdater`: `next_partition()` → write image →
    `activate_next_partition()` → set `New` → reboot → self-test → `set_current_ota_state(Valid)`.
 3. **Transport** — stream the ~0.9 MB signed image over TCP (`embassy-net`, `tcp`
    already enabled); authorize + trigger + expected SHA-256 on the existing channel.
@@ -103,6 +102,31 @@ provision/ota-switch-slot.sh --port <PORT> --slot 0   # reset -> App(Ota0) @ 0x0
 **Later (per-slot signature enforcement):** flash a **tampered** image (flip a byte,
 don't re-sign) into the inactive slot, switch to it → the bootloader must refuse it and
 fall back. Needs Secure Boot enrolled with our keys (already true on the current board).
+
+## Phase 2 runbook — in-app apply path (4.2)
+
+**Step 3 · `provision/ota-apply.sh`** builds the app with the `ota-selftest` feature,
+flashes it to `ota_0`, points `otadata` at `ota_0`, and monitors. On boot the app reads
+its own image length from the esp_image header, copies the **whole** image into the
+inactive slot via `OtaUpdater` (`next_partition` → write), `activate_next_partition()`,
+marks it `New`, and resets. On the next boot it confirms itself `Valid`
+(`ota.rs::confirm_if_pending`). Entirely on-device — no network.
+
+```sh
+provision/ota-apply.sh --port <PORT> --ssid <S> --pass <P> --supervisor <K> --keys token2
+```
+> ✅ **Verified on hardware:** `boot ota_0` → *copying full image (856 KiB)* → *wrote into
+> Ota1* → *activated (New); resetting* → `boot ota_1 @ 0x230000` → *self-test passed → marked
+> Valid*, and it stays on `ota_1`. **→ 4.2 complete.**
+
+Two gotchas found + fixed here (both real, both would bite a network OTA too):
+- The `storage` partition's subtype must be one the OTA library accepts (`spiffs`, not a
+  raw `0x40`) — otherwise scanning partitions panics.
+- A partial copy corrupts the slot when the two slots hold different builds, so the app
+  copies the **exact** image length parsed from its header, not a fixed guess.
+
+> The self-test build stays resident in `ota_1` afterward (fully functional). Reflash a
+> plain build (`provision/5-flash-app.sh`) to drop the `ota-selftest` behavior.
 
 ## Open items to confirm on hardware
 
