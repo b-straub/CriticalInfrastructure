@@ -48,7 +48,8 @@ image at runtime.
   the espup Rust toolchain. `. $IDF_PATH/export.sh`.
 - The validated HSM setup: `esptool[hsm]`, an `hsm.ini` per token (Token2 = default
   OpenSC; **Thetis needs `OPENSC_DRIVER=PIV-II`**), and the two public keys
-  (`sb_pub.pem` = Token2, `sb_backup_pub.pem` = Thetis).
+  (`token2_pub.pem`, `thetis_pub.pem`). All produced by
+  [`../../provision/1-enroll-key.sh`](../../provision/1-enroll-key.sh).
 - A **spare ESP32-S3**. A serial console on the USB-Serial-JTAG port.
 
 ---
@@ -105,10 +106,10 @@ espflash save-image --chip esp32s3 --merge=false \
 
 **A6. Verify every signature offline — must pass before any hardware:**
 ```sh
-espsecure verify-signature --version 2 --keyfile sb_pub.pem        bootloader-signed.bin
-espsecure verify-signature --version 2 --keyfile sb_backup_pub.pem bootloader-signed.bin
-espsecure verify-signature --version 2 --keyfile sb_pub.pem        app-signed.bin
-espsecure verify-signature --version 2 --keyfile sb_backup_pub.pem app-signed.bin
+espsecure verify-signature --version 2 --keyfile token2_pub.pem bootloader-signed.bin
+espsecure verify-signature --version 2 --keyfile thetis_pub.pem bootloader-signed.bin
+espsecure verify-signature --version 2 --keyfile token2_pub.pem app-signed.bin
+espsecure verify-signature --version 2 --keyfile thetis_pub.pem app-signed.bin
 ```
 All four `Signature block N … verification successful`. If any fail, **stop**.
 

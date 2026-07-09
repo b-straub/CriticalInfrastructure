@@ -17,44 +17,37 @@ idf.py -C secure-boot set-target esp32s3
 idf.py -C secure-boot bootloader        # -> secure-boot/build/bootloader/bootloader.bin
 ```
 
-## Toolchain: `espsecure` with the HSM extra
+## Toolchain + key enrollment — use the pipeline
 
-Homebrew's `esptool` does **not** bundle the PKCS#11 (`[hsm]`) extra. Install it once
-in a dedicated venv (no conflict with brew) and point `ESPSECURE` at it:
+The full clone→app flow (toolchains, key enrollment, harden, build/sign, flash) lives
+in [`../provision/`](../provision/) — one parameterized script per stage. In particular:
 
 ```sh
-python3 -m venv ~/.esptool-hsm && ~/.esptool-hsm/bin/pip install 'esptool[hsm]'
-export ESPSECURE=~/.esptool-hsm/bin/espsecure          # add to your shell profile
+provision/0-toolchains.sh install                 # espsecure[hsm] venv at ~/.esptool-hsm, etc.
+provision/1-enroll-key.sh --name token2           # -> hsm-token2.ini, token2_pub.pem, token2_digest.bin
+provision/1-enroll-key.sh --name thetis --driver PIV-II
 ```
 
-## One-time signing config (gitignored, kept out of the repo)
+This directory holds the two pieces those stages reuse: the **bootloader project**
+(built above) and **`sign-secure-boot.sh`** below.
+
+## Sign a bootloader (or any image) standalone
+
+`provision/3-build-sign.sh` calls this for you; run it directly only for one-offs
+(defaults read `hsm-token2.ini` / `token2_pub.pem` from this directory):
 
 ```sh
-cp secure-boot/hsm-config.ini.example secure-boot/hsm-token2.ini   # PIV 9a labels already correct
-# the token's secure-boot public key (for verify), read straight from the card:
-pkcs11-tool --module /opt/homebrew/lib/opensc-pkcs11.so --read-object --type pubkey --id 01 -o /tmp/t.der \
-  && openssl rsa -pubin -inform DER -in /tmp/t.der -pubout -out secure-boot/sb_pub.pem
+SKIP_BACKUP=1 ./sign-secure-boot.sh build/bootloader/bootloader.bin bootloader-signed.bin
 ```
+(For the Thetis backup too: drop `SKIP_BACKUP`; it appends `hsm-thetis.ini` / `thetis_pub.pem`.)
 
-## Sign a bootloader (or any image)
+## Rebuild + sign + flash the esp-hal app
 
-```sh
-PRIMARY_INI=secure-boot/hsm-token2.ini PRIMARY_PUB=secure-boot/sb_pub.pem SKIP_BACKUP=1 \
-  ./secure-boot/sign-secure-boot.sh secure-boot/build/bootloader/bootloader.bin bootloader-signed.bin
-```
-(For the Thetis backup too: drop `SKIP_BACKUP`, add `BACKUP_INI`/`BACKUP_PUB`/`BACKUP_DRIVER=PIV-II`.)
-
-## Rebuild + sign + flash the esp-hal app (all-in-one)
-
-`flash-signed-app.sh` builds the firmware with your Wi-Fi creds, signs the app image,
-and flashes it to a secure-booted board. See `--help` for every flag/env.
+That's stage 5 — a clean, parameterized command (no env-var prefixes):
 
 ```sh
-ESPSECURE=~/.esptool-hsm/bin/espsecure \
-PRIMARY_INI=secure-boot/hsm-token2.ini PRIMARY_PUB=secure-boot/sb_pub.pem SKIP_BACKUP=1 \
-  ./secure-boot/flash-signed-app.sh \
-    --ssid MyWifi --pass secret \
-    --supervisor 03c5803b…af3c --port /dev/cu.usbmodemXXXX
+provision/5-flash-app.sh --ssid MyWifi --pass secret \
+  --supervisor 03c5803b…af3c --port /dev/cu.usbmodemXXXX --keys token2
 ```
 
 Validated end-to-end (Token2 + Thetis on-card RSA-3072): bootloader **and** app both

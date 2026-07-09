@@ -5,4 +5,7 @@ sdkconfig.old
 # secrets / deployment artifacts (keep *.example)
 *.pem
 *-signed*.bin
+*_digest.bin
 hsm-*.ini
+hsm-*.driver
+out/

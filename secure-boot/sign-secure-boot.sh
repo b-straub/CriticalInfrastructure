@@ -3,19 +3,21 @@
 # append the BACKUP token's signature, and verify both — via espsecure + PKCS#11.
 # See docs/formal/SECURE-BOOT-V2.md. Needs esptool[hsm]: pip install 'esptool[hsm]'.
 #
+# Usually called by provision/3 + provision/5 (which pass every path explicitly). The
+# defaults below let you run it standalone from the secure-boot/ directory.
 # Config via env (defaults in parentheses):
-#   ESPSECURE     espsecure binary                       (espsecure)
-#   PRIMARY_INI   primary token hsm_config   (hsm-token2.ini)   PRIMARY_PUB (sb_pub.pem)
-#   BACKUP_INI    backup  token hsm_config   (hsm-thetis.ini)   BACKUP_PUB  (sb_backup_pub.pem)
+#   ESPSECURE     espsecure binary          (~/.esptool-hsm/bin/espsecure if present, else espsecure)
+#   PRIMARY_INI   primary token hsm_config  (hsm-token2.ini)   PRIMARY_PUB (token2_pub.pem)
+#   BACKUP_INI    backup  token hsm_config  (hsm-thetis.ini)   BACKUP_PUB  (thetis_pub.pem)
 #   BACKUP_DRIVER OpenSC driver for the backup (PIV-II — some cards need it)
 #   SKIP_BACKUP=1 sign with the primary only
 set -euo pipefail
 
 [ $# -eq 2 ] || { echo "usage: $0 <unsigned.bin> <signed.bin>"; exit 1; }
 IN="$1"; OUT="$2"
-ES="${ESPSECURE:-espsecure}"
-PRIMARY_INI="${PRIMARY_INI:-hsm-token2.ini}"; PRIMARY_PUB="${PRIMARY_PUB:-sb_pub.pem}"
-BACKUP_INI="${BACKUP_INI:-hsm-thetis.ini}";  BACKUP_PUB="${BACKUP_PUB:-sb_backup_pub.pem}"
+ES="${ESPSECURE:-$( [ -x "$HOME/.esptool-hsm/bin/espsecure" ] && echo "$HOME/.esptool-hsm/bin/espsecure" || echo espsecure )}"
+PRIMARY_INI="${PRIMARY_INI:-hsm-token2.ini}"; PRIMARY_PUB="${PRIMARY_PUB:-token2_pub.pem}"
+BACKUP_INI="${BACKUP_INI:-hsm-thetis.ini}";  BACKUP_PUB="${BACKUP_PUB:-thetis_pub.pem}"
 BACKUP_DRIVER="${BACKUP_DRIVER:-PIV-II}"
 
 echo "==> [primary] insert the primary token — PIN prompt"
