@@ -88,9 +88,17 @@ INFO - OTA: booted from App(Ota0) @ 0x020000 (1920 KiB)
 > exactly the above; identity/roles/Wi-Fi all up. `otadata` uses `write-flash` (not
 > `erase-region`, which esptool blocks on secure boards).
 
-**Step 2 · `provision/ota-switch-slot.sh --slot 1` — prove slot selection.** Flips the
-active slot via `otadata`, then power-cycle → serial should print
-`OTA: booted from App(Ota1) @ 0x230000`. Switch back with `--slot 0`.
+**Step 2 · `provision/ota-switch-slot.sh --slot <0|1>` — prove slot selection.** Writes a
+fresh `otadata` selecting the slot (seq = slot+1, state `Valid`, correct ESP CRC-32) and
+resets. **Write-only** — no flash read, no `erase-region` — so it works on this hardened
+board where secure-download blocks reads (ESP-IDF `otatool.py` reads first, so it can't).
+```sh
+provision/ota-switch-slot.sh --port <PORT> --slot 1   # reset -> App(Ota1) @ 0x230000
+provision/ota-switch-slot.sh --port <PORT> --slot 0   # reset -> App(Ota0) @ 0x020000
+```
+> ✅ **Verified on hardware** — clean round-trip:
+> `boot: Loaded app from partition at offset 0x230000` → `OTA: booted from App(Ota1)`,
+> then back to `ota_0`. Slot selection proven both ways. **→ 4.1 complete.**
 
 **Later (per-slot signature enforcement):** flash a **tampered** image (flip a byte,
 don't re-sign) into the inactive slot, switch to it → the bootloader must refuse it and
@@ -98,8 +106,7 @@ fall back. Needs Secure Boot enrolled with our keys (already true on the current
 
 ## Open items to confirm on hardware
 
-1. `booted_partition()` reports the right slot on S3 (MMU read) — validated by step 4/5.
-2. `otatool.py` writes `otadata` cleanly on a secure-download board (should; it's a
-   plain partition write). If secure-download blocks it, flip slots from the Phase 2
-   app path instead.
-3. Flash size on the spare (step 1) — the layout assumes ≥ 8 MB.
+1. ~~`booted_partition()` reports the right slot~~ — ✅ verified (Step 1/2).
+2. ~~Host-side `otadata` write on a secure-download board~~ — ✅ done write-only
+   (`ota-switch-slot.sh`); `otatool.py` is unusable here because it reads first.
+3. ~~Flash size~~ — ✅ board is 16 MB; layout needs ≥ 8 MB.
