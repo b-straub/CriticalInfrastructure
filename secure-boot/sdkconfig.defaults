@@ -1,0 +1,13 @@
+# Secure Boot v2, external (HSM) signing — validated with ESP-IDF v5.5.4.
+# `idf.py bootloader` produces a secure-padded, UNSIGNED bootloader that we sign
+# afterwards with sign-secure-boot.sh (Token2 primary + Thetis backup).
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n
+CONFIG_SECURE_BOOT_ENABLE_AGGRESSIVE_KEY_REVOKE=n
+CONFIG_SECURE_FLASH_ENC_ENABLED=n
+# The secure-boot bootloader is ~0x9000 bytes and overruns the default 0x8000
+# partition-table offset — bump it (shifts the whole flash layout; the app in
+# Phase B must match this partition table).
+CONFIG_PARTITION_TABLE_OFFSET=0xc000

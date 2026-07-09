@@ -1,0 +1,7 @@
+# espsecure --hsm signing config (per token). Copy to hsm-token2.ini / hsm-thetis.ini.
+# `credentials` is omitted on purpose -> espsecure prompts for the PIV PIN (numeric!).
+[hsm_config]
+pkcs11_lib = /opt/homebrew/lib/opensc-pkcs11.so
+slot = 0
+label = PIV AUTH key          # PIV slot 9a private key
+label_pubkey = PIV AUTH pubkey

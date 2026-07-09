@@ -1,0 +1,8 @@
+# ESP-IDF build output + generated config
+build/
+sdkconfig
+sdkconfig.old
+# secrets / deployment artifacts (keep *.example)
+*.pem
+*-signed*.bin
+hsm-*.ini

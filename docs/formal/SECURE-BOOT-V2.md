@@ -55,16 +55,28 @@ image at runtime.
 
 ## Phase A — build + sign (no hardware, no burns)
 
-**A1. A minimal IDF project for the bootloader**, `sdkconfig.defaults`:
+> **✅ Validated end-to-end** (ESP-IDF v5.5.4): the bootloader builds, and both the
+> bootloader and the esp-hal app were 2-key HSM-signed (Token2 + Thetis) and
+> `verify-signature`-clean, offline. The reproducible bootloader project + a
+> `sign-secure-boot.sh` helper live in [`../../secure-boot/`](../../secure-boot/).
+
+**A1. A minimal IDF project for the bootloader** (a `CMakeLists.txt`, a `main/` with
+an empty `app_main`, and this `sdkconfig.defaults` — validated with IDF v5.5.4):
 ```
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_SECURE_BOOT=y
 CONFIG_SECURE_BOOT_V2_ENABLED=y
-CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n          # we sign externally (HSM)
-CONFIG_SECURE_BOOT_SIGNING_KEY="sb_pub.pem"         # public key is enough when not building signed
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n          # we sign externally (HSM) — no key at build time
 CONFIG_SECURE_BOOT_ENABLE_AGGRESSIVE_KEY_REVOKE=n   # don't auto-revoke on the spare
-CONFIG_SECURE_BOOT_FLASH_ENC_KEYS_BURN_TOGETHER=n   # keep flash-encryption a separate, later step
+CONFIG_SECURE_FLASH_ENC_ENABLED=n                   # flash encryption is a separate, later step
+CONFIG_PARTITION_TABLE_OFFSET=0xc000                # SEE NOTE: secure-boot bootloader overruns 0x8000
 ```
+> **Flash-layout note (found while building):** the secure-boot bootloader is
+> **larger — `0x9000` bytes** (it embeds RSA-3072 verification + mbedTLS), so it
+> overruns the default partition-table offset `0x8000` (`bootloader binary size …
+> too large`). Bump it to **`0xc000`**. This shifts the *whole* layout down, so the
+> esp-hal app's flash offsets in Phase B **must match this partition table** (the
+> app no longer sits at the old `0x10000`).
 
 **A2. Build the (secure-padded, unsigned) bootloader:**
 ```sh
@@ -77,7 +89,7 @@ idf.py bootloader          # -> build/bootloader/bootloader.bin  (padded, no sig
 espsecure sign-data --version 2 --hsm --hsm-config hsm-token2.ini \
   --output bootloader-signed.bin build/bootloader/bootloader.bin
 OPENSC_DRIVER=PIV-II espsecure sign-data --version 2 --hsm --hsm-config hsm-thetis.ini \
-  --append_signatures --output bootloader-signed.bin bootloader-signed.bin
+  --append-signatures --output bootloader-signed.bin bootloader-signed.bin
 ```
 
 **A4. Build the esp-hal app and export a raw, secure-padded image:**
@@ -162,7 +174,7 @@ If B3–B5 all hold on the spare, the chain is proven.
 1. **IDF bootloader ↔ esp-hal app image** boots at runtime (Phase B3) — the crux.
 2. Exact `espflash`/`esptool` offsets vs. this project's partition table (verify with
    `esptool image-info` on the signed app).
-3. `--append_signatures` multi-HSM flow produces a 2-block image both keys verify (A6
+3. `--append-signatures` multi-HSM flow produces a 2-block image both keys verify (A6
    already checks this offline).
 
 ---
