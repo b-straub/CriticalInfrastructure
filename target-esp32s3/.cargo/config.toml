@@ -9,3 +9,8 @@ build-std = ["alloc", "core"]
 
 [env]
 ESP_LOG = "info,esp_wifi=error"
+# OTA: the app reads the same partition table the secure-boot bootloader uses. That
+# table was moved to 0xc000 (= 49152) to make room for the larger secure bootloader,
+# so esp-bootloader-esp-idf must read it there, not at its 0x8000 default. Bootloader
+# and app MUST agree on this value. See docs/formal/OTA.md.
+ESP_BOOTLOADER_ESP_IDF_CONFIG_PARTITION_TABLE_OFFSET = "49152"

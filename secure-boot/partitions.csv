@@ -1,0 +1,20 @@
+# CriticalInfrastructure — A/B OTA partition table (ESP32-S3, Secure Boot v2).
+#
+# The partition table lives at 0xc000 (the secure-boot bootloader is ~0x9000, so the
+# default 0x8000 is too low — see sdkconfig.defaults). Assumes a >= 8 MB flash.
+#
+# ota_0 keeps the 0x20000 app offset from the single-slot secure-boot layout, so the
+# existing flash procedure still lands the first image correctly. `storage` covers
+# 0x200000-0x230000 on purpose: the firmware currently writes persistent state to
+# absolute addresses (storage.rs: roles @0x200000, threshold @0x220000), and this
+# keeps those inside a reserved data region until they move to partition-table
+# lookup in OTA Phase 4. Each app slot is 0x1e0000 (~1.9 MB) — the signed app is
+# ~0.86 MB today, leaving generous headroom. Layout is fully contiguous.
+#
+# Name,     Type, SubType, Offset,    Size,     Flags
+otadata,    data, ota,     0xd000,    0x2000,
+phy_init,   data, phy,     0xf000,    0x1000,
+nvs,        data, nvs,     0x10000,   0x10000,
+ota_0,      app,  ota_0,   0x20000,   0x1e0000,
+storage,    data, 0x40,    0x200000,  0x30000,
+ota_1,      app,  ota_1,   0x230000,  0x1e0000,

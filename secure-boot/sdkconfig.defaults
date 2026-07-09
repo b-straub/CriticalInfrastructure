@@ -11,3 +11,17 @@ CONFIG_SECURE_FLASH_ENC_ENABLED=n
 # partition-table offset — bump it (shifts the whole flash layout; the app in
 # Phase B must match this partition table).
 CONFIG_PARTITION_TABLE_OFFSET=0xc000
+
+# A/B OTA: two app slots + otadata, with anti-brick rollback (the bootloader
+# reverts to the previous slot if a new image doesn't confirm itself Valid on
+# first boot). The custom table is partitions.csv; the app reads it at runtime via
+# esp-bootloader-esp-idf. See docs/formal/OTA.md.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# The A/B table ends at ~0x410000 (4.1 MB), so the project flash size must be >= 8 MB
+# or idf.py's partition-table fit-check fails (default is 2 MB). 8 MB is the minimum
+# that fits and is portable to any >= 8 MB board (our spare is 16 MB).
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
