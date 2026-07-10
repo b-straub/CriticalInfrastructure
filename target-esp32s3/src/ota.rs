@@ -1,168 +1,269 @@
-//! OTA update support (docs/formal/OTA.md, step 4.2).
+//! OTA update support (docs/formal/OTA.md).
 //!
-//! Two entry points, both driven from `main` right after `esp_hal::init`:
-//! - [`confirm_if_pending`] runs on every boot: if the running slot was just
-//!   activated (state `New`/`PendingVerify`), self-test and mark it `Valid` so the
-//!   bootloader's anti-rollback keeps it. Needed for every real OTA.
-//! - [`maybe_self_copy_test`] (test builds only, `ota-selftest` feature): if booted
-//!   from `ota_0`, copy the running image into the inactive slot via `OtaUpdater`,
-//!   activate it, and reset — a full apply/activate/rollback cycle with no network.
+//! Self-managed slot state so the OTA path **never reads encrypted flash** — the one
+//! requirement that makes OTA work under flash encryption without a decrypt-read layer:
+//! - the running slot comes from the **MMU** (`booted_slot`, a register read, not flash),
+//! - the OTA journal (seq / active / pending) lives in the **plaintext `storage`** partition,
+//! - we only ever **write** `otadata` + app slots, encrypted via the ROM when FE is on.
+//!
+//! The bootloader does the decrypt-reads to select the slot (built in). Two entry points,
+//! both driven from `main` after `esp_hal::init`: [`confirm_if_pending`] (every boot) and,
+//! in test builds, [`maybe_self_copy_test`]. Network delivery: [`server_task`] (`ota-net`).
 
-use esp_bootloader_esp_idf::{ota::OtaImageState, ota_updater::OtaUpdater, partitions};
 use esp_storage::FlashStorage;
 use log::info;
 
-#[cfg(any(feature = "ota-selftest", feature = "ota-net"))]
 use embedded_storage::Storage;
 #[cfg(feature = "ota-selftest")]
 use embedded_storage::ReadStorage;
-#[cfg(any(feature = "ota-selftest", feature = "ota-net"))]
-use esp_bootloader_esp_idf::partitions::{AppPartitionSubType, PartitionType};
 
-#[cfg(any(feature = "ota-selftest", feature = "ota-net"))]
 const SECTOR: usize = 4096;
-/// Total length of the Secure-Boot-signed app image at `base`: walk the esp_image
-/// header + segments + checksum + optional hash + the appended signature block. Copying
-/// exactly the image (not a fixed guess) is required because the two slots hold
-/// different builds — and is what a real OTA writer needs too. `None` on bad magic.
+// Flash layout — must match secure-boot/partitions.csv (the SSOT). Hardcoded because the
+// partition table is encrypted under FE and we refuse to decrypt-read.
+#[cfg(any(feature = "ota-net", feature = "ota-selftest"))]
+const OTA0_OFF: u32 = 0x20000;
+const OTA1_OFF: u32 = 0x230000;
+#[cfg(feature = "ota-net")]
+const SLOT_SIZE: u32 = 0x1e0000;
+const OTADATA_OFF: u32 = 0xd000; // sector 0; sector 1 at +SECTOR
+const OTA_MAGIC: u32 = 0x0A7A_5747; // journal validity marker
+#[cfg(any(feature = "ota-net", feature = "ota-selftest"))]
+const ST_NEW: u32 = 0; // esp_ota_select_entry ota_state values
+const ST_VALID: u32 = 2;
+
+/// The app slot we booted from, read from the MMU (a register, not flash — correct under
+/// flash encryption). ESP32-S3: MMU entry 0 low byte << 16 = the app's physical offset.
+pub fn booted_slot() -> u8 {
+    let paddr = unsafe { ((0x600C_5000 as *const u32).read_volatile() & 0xff) << 16 };
+    if paddr == OTA1_OFF {
+        1
+    } else {
+        0
+    }
+}
+#[cfg(any(feature = "ota-net", feature = "ota-selftest"))]
+fn slot_offset(slot: u8) -> u32 {
+    if slot == 1 {
+        OTA1_OFF
+    } else {
+        OTA0_OFF
+    }
+}
+fn fe() -> bool {
+    esp_hal::efuse::Efuse::flash_encryption()
+}
+
+/// Sector-aligned scratch — `esp_rom_spiflash_write_encrypted` takes `*mut u32` and
+/// rewrites the buffer in place, so it must be 4-byte aligned.
+#[repr(align(4))]
+struct AlignedSector([u8; SECTOR]);
+
+/// The OTA journal, kept in the plaintext `storage` partition (32 bytes).
+#[derive(Clone, Copy)]
+struct OtaState {
+    seq: u32,          // sequence of the current Valid entry
+    active_sector: u8, // otadata sector (0/1) holding it
+    active_slot: u8,   // app slot (0/1) currently Valid
+    pending_slot: u8,  // 0xFF = none, else the slot awaiting confirm
+    pending_sector: u8,
+    pending_seq: u32,
+}
+
+impl OtaState {
+    fn load() -> Option<Self> {
+        let mut b = [0u8; 32];
+        if !crate::storage::ota_state_read(&mut b) {
+            return None;
+        }
+        if u32::from_le_bytes([b[0], b[1], b[2], b[3]]) != OTA_MAGIC {
+            return None;
+        }
+        Some(Self {
+            seq: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+            active_sector: b[8],
+            active_slot: b[9],
+            pending_slot: b[10],
+            pending_sector: b[11],
+            pending_seq: u32::from_le_bytes([b[12], b[13], b[14], b[15]]),
+        })
+    }
+    fn save(&self) {
+        let mut b = [0xFFu8; 32];
+        b[0..4].copy_from_slice(&OTA_MAGIC.to_le_bytes());
+        b[4..8].copy_from_slice(&self.seq.to_le_bytes());
+        b[8] = self.active_sector;
+        b[9] = self.active_slot;
+        b[10] = self.pending_slot;
+        b[11] = self.pending_sector;
+        b[12..16].copy_from_slice(&self.pending_seq.to_le_bytes());
+        crate::storage::ota_state_write(&b);
+    }
+    /// First run: mirror what provisioning wrote — otadata sector 0 holds a Valid entry
+    /// whose seq (slot+1) selects the booted slot (ota-switch-slot.sh / ota-flash-slots.sh).
+    fn bootstrap(slot: u8) -> Self {
+        Self {
+            seq: slot as u32 + 1,
+            active_sector: 0,
+            active_slot: slot,
+            pending_slot: 0xFF,
+            pending_sector: 0,
+            pending_seq: 0,
+        }
+    }
+}
+
+/// ESP `ota_select` CRC: reflected CRC-32 (poly 0xEDB88320), init 0, xorout 0xFFFFFFFF,
+/// over the 4-byte ota_seq. (Same as provision/ota-switch-slot.sh, validated on hardware.)
+fn esp_crc(seq: u32) -> u32 {
+    let mut c: u32 = 0;
+    for byte in seq.to_le_bytes() {
+        c ^= byte as u32;
+        for _ in 0..8 {
+            c = (c >> 1) ^ if c & 1 != 0 { 0xEDB8_8320 } else { 0 };
+        }
+    }
+    c ^ 0xFFFF_FFFF
+}
+
+/// Write one flash sector at an absolute address, encrypted iff flash encryption is on.
+fn put_sector(addr: u32, buf: &mut AlignedSector, encrypted: bool) {
+    if encrypted {
+        let _ = flash_enc::write_sector(addr, &mut buf.0);
+    } else {
+        let _ = FlashStorage::new().write(addr, &buf.0[..]);
+    }
+}
+
+/// Write a fresh esp_ota_select_entry (seq, state, crc) to an otadata sector.
+fn write_otadata(sector: u8, seq: u32, state: u32, encrypted: bool) {
+    let mut buf = AlignedSector([0xFFu8; SECTOR]); // entry at the start, rest padding
+    buf.0[0..4].copy_from_slice(&seq.to_le_bytes());
+    buf.0[24..28].copy_from_slice(&state.to_le_bytes());
+    buf.0[28..32].copy_from_slice(&esp_crc(seq).to_le_bytes());
+    put_sector(OTADATA_OFF + sector as u32 * SECTOR as u32, &mut buf, encrypted);
+}
+
+/// After writing a new image to `target`, point otadata at it (New) and record it pending,
+/// so it boots next and `confirm_if_pending` validates it. seq+1 flips the A/B slot.
+#[cfg(any(feature = "ota-net", feature = "ota-selftest"))]
+fn commit_pending(target: u8) {
+    let st = OtaState::load().unwrap_or_else(|| OtaState::bootstrap(booted_slot()));
+    let new_seq = st.seq + 1;
+    let new_sector = 1 - st.active_sector;
+    write_otadata(new_sector, new_seq, ST_NEW, fe());
+    OtaState {
+        pending_slot: target,
+        pending_sector: new_sector,
+        pending_seq: new_seq,
+        ..st
+    }
+    .save();
+}
+
+/// Every boot: if we booted the pending slot, self-test and mark it Valid; if we booted
+/// the old slot instead, the bootloader rolled back — abandon the pending entry.
+pub fn confirm_if_pending() {
+    let Some(st) = OtaState::load() else {
+        OtaState::bootstrap(booted_slot()).save(); // first run: record provisioned state
+        return;
+    };
+    if st.pending_slot == 0xFF {
+        return;
+    }
+    let booted = booted_slot();
+    if booted == st.pending_slot {
+        write_otadata(st.pending_sector, st.pending_seq, ST_VALID, fe());
+        OtaState {
+            seq: st.pending_seq,
+            active_sector: st.pending_sector,
+            active_slot: st.pending_slot,
+            pending_slot: 0xFF,
+            pending_sector: 0,
+            pending_seq: 0,
+        }
+        .save();
+        info!("OTA: self-test passed -> slot {} marked Valid", booted);
+    } else {
+        OtaState {
+            pending_slot: 0xFF,
+            pending_sector: 0,
+            pending_seq: 0,
+            ..st
+        }
+        .save();
+        info!("OTA: rolled back to slot {}", booted);
+    }
+}
+
+// ---- 4.2 test-only self-copy (feature `ota-selftest`) -------------------------
+
+/// Length of the Secure-Boot-signed image at `base` (esp_image header + segments +
+/// checksum + optional hash + signature block). `None` on bad magic.
 #[cfg(feature = "ota-selftest")]
 fn signed_image_len(flash: &mut FlashStorage, base: u32) -> Option<u32> {
     let mut hdr = [0u8; 24];
     flash.read(base, &mut hdr).ok()?;
     if hdr[0] != 0xE9 {
-        return None; // esp_image magic
+        return None;
     }
     let segments = hdr[1] as u32;
     let hash_appended = hdr[23] == 1;
     let mut off = 24u32;
     for _ in 0..segments {
-        let mut seg = [0u8; 8]; // load_addr(4) + data_len(4)
+        let mut seg = [0u8; 8];
         flash.read(base + off, &mut seg).ok()?;
         off += 8 + u32::from_le_bytes([seg[4], seg[5], seg[6], seg[7]]);
     }
-    off = (off + 1 + 15) & !15; // 1-byte checksum, whole image padded to 16
+    off = (off + 1 + 15) & !15;
     if hash_appended {
-        off += 32; // appended SHA-256
+        off += 32;
     }
-    off = ((off + 4095) & !4095) + 4096; // Secure Boot v2 signature block (4 KiB, aligned)
+    off = ((off + 4095) & !4095) + 4096;
     Some(off)
 }
 
-/// Confirm a freshly-activated slot as `Valid` so anti-rollback keeps it. No-op (and
-/// silent) when nothing is pending or the board has no A/B layout.
-pub fn confirm_if_pending() {
-    let mut flash = FlashStorage::new();
-    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
-    let mut updater = match OtaUpdater::new(&mut flash, &mut buf) {
-        Ok(u) => u,
-        Err(_) => return, // no A/B layout -> nothing to confirm
-    };
-    match updater.current_ota_state() {
-        Ok(OtaImageState::New) | Ok(OtaImageState::PendingVerify) => {
-            // A real self-test would check peripherals/connectivity before confirming.
-            match updater.set_current_ota_state(OtaImageState::Valid) {
-                Ok(()) => info!("OTA: self-test passed -> slot marked Valid"),
-                Err(e) => info!("OTA: failed to mark slot Valid: {:?}", e),
-            }
-        }
-        Ok(_) | Err(_) => {} // Valid / undefined / no selection -> nothing to do
-    }
-}
-
-/// Test-only self-copy update: copy the running image into the inactive slot, activate
-/// it (state `New`), and reset. Returns without acting unless booted from `ota_0`.
+/// Test-only: from ota_0, copy the running image into ota_1, activate it, and reset.
+/// (FE off only — a self-copy reads the source slot raw, which is ciphertext under FE.)
 #[cfg(feature = "ota-selftest")]
 pub fn maybe_self_copy_test() {
-    // Only trigger from ota_0, and learn where it lives.
-    let src_off = {
-        let mut f = FlashStorage::new();
-        let mut b = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
-        let table = match partitions::read_partition_table(&mut f, &mut b) {
-            Ok(t) => t,
-            Err(e) => {
-                info!("OTA selftest: no partition table: {:?}", e);
-                return;
-            }
-        };
-        match table.booted_partition() {
-            Ok(Some(p))
-                if p.partition_type() == PartitionType::App(AppPartitionSubType::Ota0) =>
-            {
-                p.offset()
-            }
-            _ => return, // not ota_0 -> already updated, do nothing
-        }
-    };
-
-    let mut src = FlashStorage::new(); // separate handle for reading the source slot
-    let copy_len = match signed_image_len(&mut src, src_off) {
-        Some(len) => (len + SECTOR as u32 - 1) & !(SECTOR as u32 - 1), // round up to a sector
+    if booted_slot() != 0 {
+        return;
+    }
+    let src = slot_offset(0);
+    let dst = slot_offset(1);
+    let mut fs = FlashStorage::new();
+    let len = match signed_image_len(&mut fs, src) {
+        Some(l) => (l + SECTOR as u32 - 1) & !(SECTOR as u32 - 1),
         None => {
-            info!("OTA selftest: unreadable image header @ {:#x}", src_off);
+            info!("OTA selftest: unreadable image header @ {:#x}", src);
             return;
         }
     };
-    info!(
-        "OTA selftest: copying full image (ota_0 @ {:#x}, {} KiB) into the inactive slot...",
-        src_off,
-        copy_len / 1024
-    );
-    let mut flash = FlashStorage::new();
-    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
-    let mut updater = match OtaUpdater::new(&mut flash, &mut buf) {
-        Ok(u) => u,
-        Err(e) => {
-            info!("OTA selftest: updater init failed: {:?}", e);
+    info!("OTA selftest: copying full image ({} KiB) ota_0 -> ota_1...", len / 1024);
+    let mut sector = AlignedSector([0u8; SECTOR]);
+    let mut off = 0u32;
+    while off < len {
+        if fs.read(src + off, &mut sector.0).is_err() {
+            info!("OTA selftest: read @ {:#x} failed", off);
             return;
         }
-    };
-    {
-        let (mut region, slot) = match updater.next_partition() {
-            Ok(v) => v,
-            Err(e) => {
-                info!("OTA selftest: next_partition failed: {:?}", e);
-                return;
-            }
-        };
-        let mut chunk = [0u8; SECTOR];
-        let mut off: u32 = 0;
-        while off < copy_len {
-            if let Err(e) = src.read(src_off + off, &mut chunk) {
-                info!("OTA selftest: read @ {:#x} failed: {:?}", off, e);
-                return;
-            }
-            if let Err(e) = region.write(off, &chunk) {
-                info!("OTA selftest: write @ {:#x} failed: {:?}", off, e);
-                return;
-            }
-            off += SECTOR as u32;
-        }
-        info!("OTA selftest: wrote image into {:?}", slot);
+        put_sector(dst + off, &mut sector, false);
+        off += SECTOR as u32;
     }
-    if let Err(e) = updater.activate_next_partition() {
-        info!("OTA selftest: activate failed: {:?}", e);
-        return;
-    }
-    if let Err(e) = updater.set_current_ota_state(OtaImageState::New) {
-        info!("OTA selftest: mark New failed: {:?}", e);
-        return;
-    }
-    info!("OTA selftest: activated new slot (New); resetting into it...");
+    commit_pending(1);
+    info!("OTA selftest: wrote ota_1, activated (New); resetting into it...");
     esp_hal::system::software_reset();
 }
 
-// ---- 4.3: network delivery over TCP (feature `ota-net`) -----------------------
+// ---- 4.3 network delivery over TCP (feature `ota-net`) ------------------------
 //
-// SECURITY NOTE: this port is currently unauthenticated. Secure Boot is the integrity
-// backstop — a tampered/garbage image simply won't boot and rolls back — but an
-// attacker on the LAN could still force reboots or push an older *validly signed*
-// image (rollback). Gating the trigger through the authenticated supervisor channel
-// (and anti-rollback / SECURE_VERSION) is the next hardening step.
+// SECURITY: :8081 is currently unauthenticated. Secure Boot is the integrity backstop —
+// a tampered/garbage image won't boot and rolls back — but gating the trigger through the
+// supervisor channel + anti-rollback (SECURE_VERSION) is the next hardening step.
 
 /// TCP OTA server: accept on :8081, receive a length-prefixed signed image
-/// (`[u32 LE length][image bytes]`), stream it into the inactive slot via
-/// `OtaUpdater`, activate it (`New`), and reset. `confirm_if_pending` marks it `Valid`
-/// on the next boot. See docs/formal/OTA.md step 4.3.
+/// (`[u32 LE length][image bytes]`), stream it into the inactive slot (encrypted under FE),
+/// activate it, and reset. See docs/formal/OTA.md.
 #[cfg(feature = "ota-net")]
 #[embassy_executor::task]
 pub async fn server_task(stack: embassy_net::Stack<'static>) {
@@ -195,59 +296,7 @@ pub async fn server_task(stack: embassy_net::Stack<'static>) {
     }
 }
 
-/// Aligned scratch sector — `esp_rom_spiflash_write_encrypted` takes `*mut u32` and
-/// rewrites the buffer in place, so it must be 4-byte aligned.
-#[cfg(feature = "ota-net")]
-#[repr(align(4))]
-struct AlignedSector([u8; SECTOR]);
-
-/// The slot `OtaUpdater` would activate next, plus its absolute flash base and size.
-#[cfg(feature = "ota-net")]
-fn target_slot() -> Result<(AppPartitionSubType, u32, u32), &'static str> {
-    let mut flash = FlashStorage::new();
-    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
-    let slot = {
-        let mut updater = OtaUpdater::new(&mut flash, &mut buf).map_err(|_| "no A/B layout")?;
-        updater.next_partition().map_err(|_| "next_partition")?.1
-    };
-    let table = partitions::read_partition_table(&mut flash, &mut buf).map_err(|_| "read table")?;
-    let p = table
-        .find_partition(PartitionType::App(slot))
-        .map_err(|_| "find slot")?
-        .ok_or("slot not found")?;
-    Ok((slot, p.offset(), p.len()))
-}
-
-/// Activate the next slot and mark it `New` (`confirm_if_pending` -> `Valid` on boot).
-#[cfg(feature = "ota-net")]
-fn activate_next() -> Result<(), &'static str> {
-    let mut flash = FlashStorage::new();
-    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
-    let mut updater = OtaUpdater::new(&mut flash, &mut buf).map_err(|_| "no A/B layout")?;
-    updater.activate_next_partition().map_err(|_| "activate")?;
-    updater.set_current_ota_state(OtaImageState::New).map_err(|_| "set New")?;
-    Ok(())
-}
-
-/// Write one sector to an absolute flash address, encrypted iff flash encryption is on.
-/// The non-encrypted path is byte-identical to the FlashRegion write used since 4.3
-/// (FlashRegion.write(off) == FlashStorage.write(base + off)).
-#[cfg(feature = "ota-net")]
-fn put_sector(
-    fs: &mut FlashStorage,
-    addr: u32,
-    buf: &mut [u8; SECTOR],
-    encrypted: bool,
-) -> Result<(), &'static str> {
-    if encrypted {
-        flash_enc::write_sector(addr, buf)
-    } else {
-        fs.write(addr, &buf[..]).map_err(|_| "flash write")
-    }
-}
-
-/// Receive a length-prefixed image from `sock` and install it into the inactive slot.
-/// Returns the number of image bytes written.
+/// Receive a length-prefixed image and install it into the inactive slot. Returns bytes written.
 #[cfg(feature = "ota-net")]
 async fn receive_and_install(
     sock: &mut embassy_net::tcp::TcpSocket<'_>,
@@ -255,25 +304,20 @@ async fn receive_and_install(
     let mut lenb = [0u8; 4];
     read_exact(sock, &mut lenb).await?;
     let total = u32::from_le_bytes(lenb);
-
-    let (slot, base, size) = target_slot()?;
-    if total == 0 || total > size {
+    if total == 0 || total > SLOT_SIZE {
         return Err("bad image length");
     }
-    // On a flash-encrypted board the app image must be stored *encrypted* (the bootloader
-    // decrypts it via the MMU at boot). otadata/storage stay plaintext, so this app-slot
-    // write is the only path that changes. FE is detected at runtime, so this build is
-    // identical to 4.3 on a non-encrypted board.
-    let encrypted = esp_hal::efuse::Efuse::flash_encryption();
+    let target = 1 - booted_slot();
+    let base = slot_offset(target);
+    let encrypted = fe();
     info!(
-        "OTA: receiving {} bytes into {:?} @ {:#x}{}",
+        "OTA: receiving {} bytes into slot {} @ {:#x}{}",
         total,
-        slot,
+        target,
         base,
         if encrypted { " [encrypted]" } else { "" }
     );
 
-    let mut fs = FlashStorage::new();
     let mut sector = AlignedSector([0u8; SECTOR]);
     let mut filled = 0usize;
     let mut written = 0u32;
@@ -290,26 +334,43 @@ async fn receive_and_install(
         filled += n;
         remaining -= n;
         if filled == SECTOR {
-            put_sector(&mut fs, base + written, &mut sector.0, encrypted)?;
+            put_sector(base + written, &mut sector, encrypted);
             written += SECTOR as u32;
             filled = 0;
         }
     }
     if filled > 0 {
         for b in sector.0[filled..].iter_mut() {
-            *b = 0xFF; // pad the final partial sector, matching a flashed image
+            *b = 0xFF;
         }
-        put_sector(&mut fs, base + written, &mut sector.0, encrypted)?;
+        put_sector(base + written, &mut sector, encrypted);
     }
 
-    activate_next()?;
+    commit_pending(target);
     Ok(total)
 }
 
-/// Encrypted flash writes for OTA app slots under flash encryption. Reached only when
-/// `Efuse::flash_encryption()` is true. NOT bench-verifiable (needs a flash-encrypted
-/// board) — validated in the 4.5 spare-board session; see docs/formal/OTA.md.
 #[cfg(feature = "ota-net")]
+async fn read_exact(
+    sock: &mut embassy_net::tcp::TcpSocket<'_>,
+    buf: &mut [u8],
+) -> Result<(), &'static str> {
+    let mut got = 0;
+    while got < buf.len() {
+        let n = sock.read(&mut buf[got..]).await.map_err(|_| "socket read")?;
+        if n == 0 {
+            return Err("connection closed early");
+        }
+        got += n;
+    }
+    Ok(())
+}
+
+// ---- flash-encryption-aware write (used whenever FE is on) --------------------
+
+/// Encrypted flash writes for the encrypted regions (app slots + otadata). Reached only
+/// when `Efuse::flash_encryption()` is true. NOT bench-verifiable (needs a flash-encrypted
+/// board) — validated in the FE enablement session; see docs/formal/OTA.md.
 mod flash_enc {
     // Linked from the ESP32-S3 ROM via esp-rom-sys's rom.ld.
     extern "C" {
@@ -321,8 +382,7 @@ mod flash_enc {
 
     /// Erase + encrypted-write one 4096-byte sector at `addr` (4096-aligned). `buf` is
     /// 4-byte aligned and rewritten in place by the ROM. In a critical section, as
-    /// esp-storage does for plain writes; sector-sized addr/len meet the ROM's 32-byte
-    /// alignment requirement.
+    /// esp-storage does for plain writes; sector-sized addr/len meet the 32-byte requirement.
     pub(super) fn write_sector(addr: u32, buf: &mut [u8; 4096]) -> Result<(), &'static str> {
         critical_section::with(|_| unsafe {
             if esp_rom_spiflash_erase_sector(addr / 4096) != 0 {
@@ -338,21 +398,4 @@ mod flash_enc {
             }
         })
     }
-}
-
-/// Read exactly `buf.len()` bytes or fail.
-#[cfg(feature = "ota-net")]
-async fn read_exact(
-    sock: &mut embassy_net::tcp::TcpSocket<'_>,
-    buf: &mut [u8],
-) -> Result<(), &'static str> {
-    let mut got = 0;
-    while got < buf.len() {
-        let n = sock.read(&mut buf[got..]).await.map_err(|_| "socket read")?;
-        if n == 0 {
-            return Err("connection closed early");
-        }
-        got += n;
-    }
-    Ok(())
 }

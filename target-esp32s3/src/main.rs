@@ -56,28 +56,9 @@ async fn main(spawner: Spawner) {
 
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
-    // OTA (Phase 1 observability): report which A/B slot the secure bootloader
-    // selected, read from the partition table via esp-bootloader-esp-idf. The
-    // MMU-based lookup distinguishes ota_0/ota_1 even when both hold the same image.
-    {
-        use esp_bootloader_esp_idf::partitions;
-        use esp_storage::FlashStorage;
-        let mut flash = FlashStorage::new();
-        let mut pt = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
-        match partitions::read_partition_table(&mut flash, &mut pt) {
-            Ok(table) => match table.booted_partition() {
-                Ok(Some(p)) => info!(
-                    "OTA: booted from {:?} @ {:#08x} ({} KiB)",
-                    p.partition_type(),
-                    p.offset(),
-                    p.len() / 1024
-                ),
-                Ok(None) => info!("OTA: booted partition not found in table"),
-                Err(e) => info!("OTA: booted_partition error {:?}", e),
-            },
-            Err(e) => info!("OTA: partition-table read error {:?}", e),
-        }
-    }
+    // OTA: which A/B slot we booted, from the MMU (a register read — correct under
+    // flash encryption, no partition-table read).
+    info!("OTA: booted from slot {}", ota::booted_slot());
 
     // OTA: confirm a freshly-activated slot, and (test builds) run the self-copy once.
     ota::confirm_if_pending();

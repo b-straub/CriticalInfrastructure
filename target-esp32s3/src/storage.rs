@@ -13,9 +13,28 @@ use esp_bootloader_esp_idf::partitions;
 use esp_storage::FlashStorage;
 use log::error;
 
-// Offsets within the `storage` partition (0x30000 = 192 KiB).
+// Offsets within the `storage` partition (0x30000 = 192 KiB). `storage` is a plaintext
+// data partition (not in the flash-encryption default list), so raw SPI read/write works
+// even on an encrypted board — which is exactly why the OTA journal lives here.
 const ROLES_OFF: u32 = 0x0;
+const OTA_STATE_OFF: u32 = 0x10000;
 const THRESHOLD_OFF: u32 = 0x20000;
+
+/// Read the 32-byte OTA-state journal (format owned by `ota.rs`). `false` if `storage`
+/// is absent. Plaintext, so this works with or without flash encryption.
+pub(crate) fn ota_state_read(buf: &mut [u8; 32]) -> bool {
+    let Some(base) = storage_base() else { return false };
+    FlashStorage::new().read(base + OTA_STATE_OFF, buf).is_ok()
+}
+
+/// Write the 32-byte OTA-state journal (esp-storage erases the sector; the record sits
+/// in the first 32 bytes).
+pub(crate) fn ota_state_write(buf: &[u8; 32]) {
+    let Some(base) = storage_base() else { return };
+    let mut page = [0xFFu8; 4096];
+    page[..32].copy_from_slice(buf);
+    let _ = FlashStorage::new().write(base + OTA_STATE_OFF, &page);
+}
 
 /// Absolute flash offset of the `storage` partition, from the partition table.
 /// `None` (with an error logged) if it is absent — callers then skip persistence.

@@ -163,41 +163,35 @@ trigger through the authenticated supervisor channel, and add anti-rollback
 
 ## Phase 5 — flash encryption (4.5, in progress)
 
-**Design (what's encrypted vs plaintext).** On an encrypted board the flash controller
-decrypts MMU-mapped reads but `esp-storage` reads *raw SPI* (ciphertext). So:
+**What's encrypted.** Flash encryption force-encrypts the bootloader, partition table,
+**all app slots**, and **`otadata`** (IDF default — `otadata` cannot be made plaintext).
+Only `storage`, `nvs`, `phy_init` stay plaintext (data partitions, not flagged).
+`esp-storage` reads *raw SPI* (ciphertext under FE), so reading any encrypted region would
+need decryption.
 
-| Region | Encrypted? | Why |
-|--------|-----------|-----|
-| bootloader, partition table, `ota_0`/`ota_1` | **yes** (mandatory) | the bootloader/MMU decrypt them at boot |
-| `otadata` | **no** (plaintext) | the OTA crate reads/writes it via raw SPI |
-| `storage`, `nvs`, `phy_init` | **no** (plaintext) | `storage.rs` reads/writes via raw SPI |
+**We never decrypt-read.** Instead of reading `otadata` / the partition table, the OTA
+path self-manages its state (`src/ota.rs`), which also drops the OTA crate:
+- running slot ← the **MMU** (`booted_slot` — a register read, not flash);
+- OTA journal (seq / active / pending) ← the **plaintext `storage`** partition;
+- we only ever **write** `otadata` + app slots (our own `ota_select` entries), encrypted
+  via `esp_rom_spiflash_write_encrypted` when `Efuse::flash_encryption()`, raw otherwise.
 
-Keeping `otadata`/`storage` plaintext means the **only** write that must change is the
-OTA app-image write. (Their contents aren't secret — slot pointer, supervisor-signed
-roles, a threshold.)
+The bootloader does the decrypt-reads to pick the slot (built in). Works with or without FE.
 
-**Encrypted-write path (implemented, `src/ota.rs`).** The OTA write detects flash
-encryption at runtime (`Efuse::flash_encryption()`); when on, it erases + writes each
-app-slot sector with the ROM's `esp_rom_spiflash_write_encrypted`; when off, the normal
-path (byte-identical to 4.3). Network OTA feeds a **plaintext** image (from TCP) →
-encrypt-on-write. The 4.2 *self-copy* can't work under FE (raw source read = ciphertext)
-— test-only, and documented as such.
+> ✅ **A1 verified on hardware (FE off):** the self-managed cycle round-trips —
+> `slot 0 →push→ slot 1` (confirmed Valid, stays), `slot 1 →push→ slot 0` — same behavior
+> as 4.3 with **zero encrypted-flash reads**. All feature combos compile clean. **A2** (the
+> encrypt-write branch) is wired + FE-runtime-gated; it goes live only on an encrypted
+> board and is validated below.
 
-> **Status: bench.** Compiles for all feature combos; on a non-encrypted board it is
-> identical to 4.3 (the encrypted branch is dormant). The encrypted branch — the ROM
-> `enable → write → disable` sequence, the cache/critical-section behavior, and the
-> partition encryption flags — is **not bench-verifiable** and gets validated in the
-> spare-board session below.
-
-**Remaining (spare board, irreversible — dev mode first):**
-1. Mark app partitions encrypted / `otadata`+`storage` plaintext (partition-table flags),
-   and set `CONFIG_SECURE_FLASH_ENC_ENABLED=y` + **Development** mode in the bootloader.
-2. Enable flash encryption on a **spare** (dev mode keeps a limited number of plaintext
-   reflashes as an escape hatch).
-3. Validate: normal boot works; then a **network OTA** installs + boots a new slot (the
-   encrypted-write branch, live). Fix the ROM sequence here if needed.
-4. Only then consider **Release** mode (permanently disables plaintext serial flashing —
-   OTA becomes the sole update path, which is why we built it first).
+**Remaining (a unit, Development mode first):**
+1. Bootloader: `CONFIG_SECURE_FLASH_ENC_ENABLED=y` + **Development** mode, Secure Boot kept
+   on. Partition table unchanged (app auto-encrypted; `storage`/`nvs` plaintext). Build + sign.
+2. Flash signed bootloader+table+app; first boot auto-generates + burns the XTS-AES key
+   (free block KEY3/4) and encrypts flash in place. Verify boot + app + roles; dump flash → ciphertext.
+3. Validate a **network OTA** (the encrypt-write branch goes live) → boots the new slot.
+4. **Release** mode: rebuild bootloader Release; re-provision; burn `ENABLE_SECURITY_DOWNLOAD`.
+   Now only signed **and** encrypted firmware boots/flashes; OTA-only; flash confidential.
 
 ## Open items to confirm on hardware
 
