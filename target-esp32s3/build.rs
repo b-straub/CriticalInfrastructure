@@ -31,8 +31,10 @@ fn main() {
     let dirty = run("git", &["status", "--porcelain"]).is_some();
     let version = if dirty { format!("{hash}+") } else { hash };
     let build = run("date", &["+%Y-%m-%d %H:%M"]).unwrap_or_else(|| "unknown".into());
-    let hhmm = run("date", &["+%H%M"]).unwrap_or_else(|| "----".into()); // compact LCD tag
+    // Compact LCD tag: a 4-hex-char git short hash (prefix of FW_VERSION's 7). Unlike a clock
+    // time it's unique to the commit, not ambiguous across days.
+    let short = run("git", &["rev-parse", "--short=4", "HEAD"]).unwrap_or_else(|| "----".into());
     println!("cargo:rustc-env=FW_VERSION={version}");
     println!("cargo:rustc-env=FW_BUILD={build}");
-    println!("cargo:rustc-env=FW_HHMM={hhmm}");
+    println!("cargo:rustc-env=FW_SHORT={short}");
 }

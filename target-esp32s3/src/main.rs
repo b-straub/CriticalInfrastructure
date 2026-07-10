@@ -216,7 +216,7 @@ async fn main(spawner: Spawner) {
                     let mut status_str = heapless::String::<16>::new();
                     if let Some((temp, hum)) = reading {
                         // compact temp/humidity + build tag, e.g. "25.9C 48%H 0945"
-                        let _ = write!(&mut status_str, "{:.1}C {:.0}%H {}", temp, hum, env!("FW_HHMM"));
+                        let _ = write!(&mut status_str, "{:.1}C {:.0}%H {}", temp, hum, env!("FW_SHORT"));
                         while status_str.len() < 16 {
                             let _ = status_str.push(' ');
                         }
