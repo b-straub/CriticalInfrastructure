@@ -374,28 +374,39 @@ async fn read_exact(
 mod flash_enc {
     // Linked from the ESP32-S3 ROM via esp-rom-sys's rom.ld.
     extern "C" {
+        fn esp_rom_spiflash_unlock() -> i32;
         fn esp_rom_spiflash_erase_sector(sector: u32) -> i32;
         fn esp_rom_spiflash_write_encrypted_enable();
         fn esp_rom_spiflash_write_encrypted_disable();
         fn esp_rom_spiflash_write_encrypted(addr: u32, data: *mut u32, len: u32) -> i32;
     }
 
+    /// The erase + encrypted-write window, placed in RAM (`.rwtext`, like esp-storage's
+    /// flash routines). `write_encrypted_enable()` puts SPI in encrypto mode and breaks
+    /// flash XIP, so every instruction between enable and disable must be fetched from RAM,
+    /// not flash — otherwise the CPU hangs on the next instruction fetch.
+    #[cfg_attr(not(target_os = "macos"), unsafe(link_section = ".rwtext"))]
+    unsafe fn erase_and_encrypt(addr: u32, buf: *mut u32) -> Result<(), &'static str> {
+        if esp_rom_spiflash_unlock() != 0 {
+            return Err("unlock");
+        }
+        if esp_rom_spiflash_erase_sector(addr / 4096) != 0 {
+            return Err("erase");
+        }
+        esp_rom_spiflash_write_encrypted_enable();
+        let rc = esp_rom_spiflash_write_encrypted(addr, buf, 4096);
+        esp_rom_spiflash_write_encrypted_disable();
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err("encrypted write")
+        }
+    }
+
     /// Erase + encrypted-write one 4096-byte sector at `addr` (4096-aligned). `buf` is
-    /// 4-byte aligned and rewritten in place by the ROM. In a critical section, as
-    /// esp-storage does for plain writes; sector-sized addr/len meet the 32-byte requirement.
+    /// 4-byte aligned and rewritten in place by the ROM. Interrupts off (so no ISR runs
+    /// flash-resident code during the encrypto window); the window itself is in RAM.
     pub(super) fn write_sector(addr: u32, buf: &mut [u8; 4096]) -> Result<(), &'static str> {
-        critical_section::with(|_| unsafe {
-            if esp_rom_spiflash_erase_sector(addr / 4096) != 0 {
-                return Err("erase");
-            }
-            esp_rom_spiflash_write_encrypted_enable();
-            let rc = esp_rom_spiflash_write_encrypted(addr, buf.as_mut_ptr() as *mut u32, 4096);
-            esp_rom_spiflash_write_encrypted_disable();
-            if rc == 0 {
-                Ok(())
-            } else {
-                Err("encrypted write")
-            }
-        })
+        critical_section::with(|_| unsafe { erase_and_encrypt(addr, buf.as_mut_ptr() as *mut u32) })
     }
 }

@@ -53,15 +53,14 @@ offset** (`0xc000`) — set in `secure-boot/sdkconfig.defaults`
 3. **Transport** — ✅ done. Stream the signed image over TCP (`embassy-net`) into the
    inactive slot; Secure Boot verifies it on boot. (Authorization via the supervisor
    channel + anti-rollback are the remaining hardening — see below.)
-4. **Move persistent state** — ✅ done. `storage.rs` locates the `storage` partition by
-   name from the table (no hardcoded `0x200000`); missing → persistence disabled + logged
-   (no guessed address). Verified over OTA: the 4.4 build read the roles/threshold the old
-   build wrote. (`identity.rs`'s flash seed is `#[cfg(not(efuse-hmac-identity))]` — dev-only,
-   not compiled on the hardened board — so it keeps its address to avoid breaking dev boards
-   whose default table has no `storage` partition.)
-5. **Flash encryption** — 🔨 encrypted-write path implemented (bench, runtime-gated).
-   Remaining: partition encryption flags + dev-mode enable on a spare + validate
-   encrypted OTA, then Release. Closes [`SECURE-BOOT-V2.md`](./SECURE-BOOT-V2.md) Phase C.
+4. **Move persistent state** — ✅ done. Roles/threshold/OTA-journal live in the plaintext
+   `storage` partition, accessed via the ROM flash functions at a fixed offset (the
+   partition table is encrypted under FE, so it can't be looked up — and esp-storage's
+   capacity probe reads the encrypted `0x0` and fails). Verified over OTA, encrypted and not.
+5. **Flash encryption** — ✅ done through Development mode + verified on hardware: Secure
+   Boot + FE both enforced, and a **network OTA under encryption** installs, decrypts,
+   boots the new slot, and confirms Valid. **Release** mode is the remaining final seal.
+   Closes [`SECURE-BOOT-V2.md`](./SECURE-BOOT-V2.md) Phase C.
 
 ---
 
@@ -184,14 +183,27 @@ The bootloader does the decrypt-reads to pick the slot (built in). Works with or
 > encrypt-write branch) is wired + FE-runtime-gated; it goes live only on an encrypted
 > board and is validated below.
 
-**Remaining (a unit, Development mode first):**
-1. Bootloader: `CONFIG_SECURE_FLASH_ENC_ENABLED=y` + **Development** mode, Secure Boot kept
-   on. Partition table unchanged (app auto-encrypted; `storage`/`nvs` plaintext). Build + sign.
-2. Flash signed bootloader+table+app; first boot auto-generates + burns the XTS-AES key
-   (free block KEY3/4) and encrypts flash in place. Verify boot + app + roles; dump flash → ciphertext.
-3. Validate a **network OTA** (the encrypt-write branch goes live) → boots the new slot.
-4. **Release** mode: rebuild bootloader Release; re-provision; burn `ENABLE_SECURITY_DOWNLOAD`.
-   Now only signed **and** encrypted firmware boots/flashes; OTA-only; flash confidential.
+**Enablement (a unit, Development mode):**
+1. ✅ Bootloader `CONFIG_SECURE_FLASH_ENC_ENABLED=y` + AES-256 + **Development** mode, Secure
+   Boot kept on (`secure-boot/sdkconfig.defaults`). Partition table unchanged (app
+   auto-encrypted; `storage`/`nvs` plaintext).
+2. ✅ Flashed the signed chain; first boot auto-generated + burned the XTS-AES-256 key
+   (KEY3/4) and encrypted flash in place. Verified: boots, app runs, roles/threshold load.
+3. ✅ **Network OTA under encryption verified on hardware:** pushed the signed image →
+   `receiving … [encrypted]` → encrypt-written to `ota_1` → decrypted + booted → *slot 1
+   marked Valid* and stable across reset. Dev-mode reflash is `esptool write-flash --encrypt`
+   (repeatable). Once encrypted, the app updates itself over the air with no cable.
+4. ⏳ **Release** mode (final seal): rebuild bootloader Release; re-provision; burn
+   `ENABLE_SECURITY_DOWNLOAD`. Then only signed **and** encrypted firmware boots/flashes;
+   OTA-only; flash confidential.
+
+**Three bugs found + fixed enabling FE** (all in the "not bench-verifiable" set):
+- `esp_storage::FlashStorage::new()` probes chip size by reading the bootloader header at
+  `0x0` — encrypted under FE → mis-sizes the chip → every storage op fails a bounds check.
+  Fixed: `storage.rs` uses the ROM flash functions directly on the fixed `storage` offset.
+- `esp_rom_spiflash_write_encrypted_enable()` breaks flash XIP, so the encrypt-write window
+  must run from RAM (`.rwtext`), or the next instruction fetch hangs.
+- The ROM erase/write need `esp_rom_spiflash_unlock()` first (esp-storage does this).
 
 ## Open items to confirm on hardware
 

@@ -1,88 +1,82 @@
-//! Flash persistence for roles and the alarm threshold.
+//! Flash persistence for roles, the alarm threshold, and the OTA journal — all in the
+//! plaintext `storage` partition.
 //!
-//! Both live in the `storage` data partition, located at runtime from the partition
-//! table (see docs/formal/OTA.md 4.4) rather than a hardcoded flash address — so the
-//! layout can change (e.g. an A/B OTA table) without editing this file. Offsets are
-//! relative to the partition, and unchanged from the old absolute layout, so data
-//! already on flash is read back correctly. If the table has no `storage` partition we
-//! log and disable persistence — we never guess an address.
+//! We call the ROM SPI-flash functions directly instead of `esp_storage::FlashStorage`,
+//! because `FlashStorage::new()` probes the chip size by reading the bootloader header at
+//! `0x0` — which is *encrypted* under flash encryption — so it reads ciphertext, mis-sizes
+//! the chip, and every read/write then fails a bounds check. We only ever touch the fixed,
+//! in-bounds `storage` partition, so no capacity probe is needed. Writes run from RAM
+//! (`.rwtext`, like esp-storage's own writes) so they survive the flash-XIP stall.
 
 use crate::state::RoleEntry;
-use embedded_storage::{ReadStorage, Storage};
-use esp_bootloader_esp_idf::partitions;
-use esp_storage::FlashStorage;
-use log::error;
 
-// Offsets within the `storage` partition (0x30000 = 192 KiB). `storage` is a plaintext
-// data partition (not in the flash-encryption default list), so raw SPI read/write works
-// even on an encrypted board — which is exactly why the OTA journal lives here.
+const STORAGE_BASE: u32 = 0x200000; // must match secure-boot/partitions.csv (SSOT)
 const ROLES_OFF: u32 = 0x0;
 const OTA_STATE_OFF: u32 = 0x10000;
 const THRESHOLD_OFF: u32 = 0x20000;
+const SECTOR: usize = 4096;
 
-/// Read the 32-byte OTA-state journal (format owned by `ota.rs`). `false` if `storage`
-/// is absent. Plaintext, so this works with or without flash encryption.
-pub(crate) fn ota_state_read(buf: &mut [u8; 32]) -> bool {
-    let Some(base) = storage_base() else { return false };
-    FlashStorage::new().read(base + OTA_STATE_OFF, buf).is_ok()
+/// Word-aligned sector buffer (the ROM flash functions take `*u32`).
+#[repr(align(4))]
+struct Page([u8; SECTOR]);
+
+// Linked from the ESP32-S3 ROM via esp-rom-sys's rom.ld.
+extern "C" {
+    fn esp_rom_spiflash_read(src: u32, dst: *mut u32, len: u32) -> i32;
+    fn esp_rom_spiflash_unlock() -> i32;
+    fn esp_rom_spiflash_erase_sector(sector: u32) -> i32;
+    fn esp_rom_spiflash_write(dst: u32, src: *const u32, len: u32) -> i32;
 }
 
-/// Write the 32-byte OTA-state journal (esp-storage erases the sector; the record sits
-/// in the first 32 bytes).
-pub(crate) fn ota_state_write(buf: &[u8; 32]) {
-    let Some(base) = storage_base() else { return };
-    let mut page = [0xFFu8; 4096];
-    page[..32].copy_from_slice(buf);
-    let _ = FlashStorage::new().write(base + OTA_STATE_OFF, &page);
+#[cfg_attr(not(target_os = "macos"), unsafe(link_section = ".rwtext"))]
+unsafe fn read_inner(addr: u32, dst: *mut u32) -> bool {
+    esp_rom_spiflash_read(addr, dst, SECTOR as u32) == 0
 }
 
-/// Absolute flash offset of the `storage` partition, from the partition table.
-/// `None` (with an error logged) if it is absent — callers then skip persistence.
-fn storage_base() -> Option<u32> {
-    let mut flash = FlashStorage::new();
-    let mut buf = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
-    let table = partitions::read_partition_table(&mut flash, &mut buf).ok()?;
-    for p in table.iter() {
-        if p.label_as_str().trim_end_matches('\0') == "storage" {
-            return Some(p.offset());
-        }
+#[cfg_attr(not(target_os = "macos"), unsafe(link_section = ".rwtext"))]
+unsafe fn write_inner(addr: u32, src: *const u32) -> bool {
+    if esp_rom_spiflash_unlock() != 0 {
+        return false;
     }
-    error!("storage: no `storage` partition in the table — persistence disabled");
-    None
+    if esp_rom_spiflash_erase_sector(addr / SECTOR as u32) != 0 {
+        return false;
+    }
+    esp_rom_spiflash_write(addr, src, SECTOR as u32) == 0
+}
+
+fn read_page(off: u32, page: &mut Page) -> bool {
+    critical_section::with(|_| unsafe { read_inner(STORAGE_BASE + off, page.0.as_mut_ptr() as *mut u32) })
+}
+
+fn write_page(off: u32, page: &Page) -> bool {
+    critical_section::with(|_| unsafe { write_inner(STORAGE_BASE + off, page.0.as_ptr() as *const u32) })
 }
 
 /// Load the persisted, supervisor-signed roles (postcard-encoded).
 pub fn load_roles() -> Option<heapless::Vec<RoleEntry, 10>> {
-    let base = storage_base()?;
-    let mut flash = FlashStorage::new();
-    let mut buf = [0u8; 4096];
-    if flash.read(base + ROLES_OFF, &mut buf).is_ok() {
-        postcard::from_bytes::<heapless::Vec<RoleEntry, 10>>(&buf).ok()
-    } else {
-        None
+    let mut page = Page([0u8; SECTOR]);
+    if !read_page(ROLES_OFF, &mut page) {
+        return None;
     }
+    postcard::from_bytes::<heapless::Vec<RoleEntry, 10>>(&page.0).ok()
 }
 
 /// Persist the current role set.
 pub fn save_roles(roles: &heapless::Vec<RoleEntry, 10>) {
-    let Some(base) = storage_base() else { return };
     if let Ok(bytes) = postcard::to_vec::<_, 4096>(roles) {
-        let mut flash = FlashStorage::new();
-        let mut write_buf = [0u8; 4096];
-        write_buf[..bytes.len()].copy_from_slice(&bytes);
-        let _ = flash.write(base + ROLES_OFF, &write_buf);
+        let mut page = Page([0xFFu8; SECTOR]);
+        page.0[..bytes.len()].copy_from_slice(&bytes);
+        let _ = write_page(ROLES_OFF, &page);
     }
 }
 
 /// Load the persisted alarm threshold, if a sane value was stored.
 pub fn load_threshold() -> Option<f32> {
-    let base = storage_base()?;
-    let mut flash = FlashStorage::new();
-    let mut buf = [0u8; 4096];
-    if flash.read(base + THRESHOLD_OFF, &mut buf).is_ok() {
-        let stored = f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-        if stored.is_finite() && stored > -50.0 && stored < 200.0 {
-            return Some(stored);
+    let mut page = Page([0u8; SECTOR]);
+    if read_page(THRESHOLD_OFF, &mut page) {
+        let v = f32::from_le_bytes([page.0[0], page.0[1], page.0[2], page.0[3]]);
+        if v.is_finite() && v > -50.0 && v < 200.0 {
+            return Some(v);
         }
     }
     None
@@ -90,9 +84,24 @@ pub fn load_threshold() -> Option<f32> {
 
 /// Persist the alarm threshold so it survives reboot.
 pub fn save_threshold(val: f32) {
-    let Some(base) = storage_base() else { return };
-    let mut buf = [0u8; 4096];
-    buf[0..4].copy_from_slice(&val.to_le_bytes());
-    let mut flash = FlashStorage::new();
-    let _ = flash.write(base + THRESHOLD_OFF, &buf);
+    let mut page = Page([0xFFu8; SECTOR]);
+    page.0[0..4].copy_from_slice(&val.to_le_bytes());
+    let _ = write_page(THRESHOLD_OFF, &page);
+}
+
+/// Read the 32-byte OTA-state journal (format owned by `ota.rs`).
+pub(crate) fn ota_state_read(buf: &mut [u8; 32]) -> bool {
+    let mut page = Page([0u8; SECTOR]);
+    if !read_page(OTA_STATE_OFF, &mut page) {
+        return false;
+    }
+    buf.copy_from_slice(&page.0[..32]);
+    true
+}
+
+/// Write the 32-byte OTA-state journal (the record sits in the first 32 bytes).
+pub(crate) fn ota_state_write(buf: &[u8; 32]) {
+    let mut page = Page([0xFFu8; SECTOR]);
+    page.0[..32].copy_from_slice(buf);
+    let _ = write_page(OTA_STATE_OFF, &page);
 }
