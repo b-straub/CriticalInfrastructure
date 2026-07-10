@@ -173,7 +173,7 @@ attacker could force reboots or push an older *validly signed* image. Next: gate
 trigger through the authenticated supervisor channel, and add anti-rollback
 (`SECURE_VERSION`).
 
-## Phase 5 — flash encryption (4.5, in progress)
+## Phase 5 — flash encryption (4.5, ✅ complete — Dev-encrypted, network-OTA verified, Release-sealed)
 
 **What's encrypted.** Flash encryption force-encrypts the bootloader, partition table,
 **all app slots**, and **`otadata`** (IDF default — `otadata` cannot be made plaintext).
@@ -206,21 +206,24 @@ The bootloader does the decrypt-reads to pick the slot (built in). Works with or
    `receiving … [encrypted]` → encrypt-written to `ota_1` → decrypted + booted → *slot 1
    marked Valid* and stable across reset. Dev-mode reflash is `esptool write-flash --encrypt`
    (repeatable). Once encrypted, the app updates itself over the air with no cable.
-4. ⏳ **Release seal (stage D) — `provision/6-release-seal.sh`.** No bootloader rebuild or
-   re-provision: an already Dev-encrypted board graduates by burning three lock bits
-   directly. On the live board (`usbmodem5B7A1147281`) all other hardening is already
-   done — Secure Boot on, HMAC identity burned + read-protected (`KEY_PURPOSE_0=HMAC_UP`),
-   JTAG off (`DIS_PAD_JTAG`/`DIS_USB_JTAG`) — so only these remain pending:
+4. ✅ **Release seal (stage D) — `provision/6-release-seal.sh` — burned + verified on hardware.**
+   No bootloader rebuild or re-provision: an already Dev-encrypted board graduates by burning
+   three lock bits directly. On the live board (`usbmodem5B7A1147281`) all other hardening was
+   already done — Secure Boot on, HMAC identity burned + read-protected (`KEY_PURPOSE_0=HMAC_UP`),
+   JTAG off (`DIS_PAD_JTAG`/`DIS_USB_JTAG`) — so only these were pending, and were burned in one
+   BLOCK0 write:
    - `SPI_BOOT_CRYPT_CNT` `0b001 → 0b111` — ROM won't re-encrypt flash (kills `write-flash --encrypt`); encryption stays on.
    - `DIS_DOWNLOAD_MANUAL_ENCRYPT` `0 → 1` — UART can't encrypt-write.
    - `ENABLE_SECURITY_DOWNLOAD` `0 → 1` — UART download can't read/dump/erase flash or eFuses.
 
-   After this the **cable can no longer decrypt, dump, or reflash**; the only way to change
+   The cable can no longer decrypt, dump, or reflash — proven by espefuse itself now refusing
+   ("Secure download mode is enabled. espefuse can not continue"). The only way to change
    firmware is signed + encrypted **OTA** (`provision/ota-update.sh`) — the app encrypt-writes
-   from RAM, a path these bits don't gate. Irreversible; the script dry-runs by default and
-   only burns with `--yes-burn`. Not fixed by the seal: `:8081` is unauthenticated and there
-   is no `SECURE_VERSION` anti-rollback, so a validly-signed *older* image could still be
-   pushed — a separate app-layer/eFuse task.
+   from RAM, a path these bits don't gate. **Verified post-seal:** power-cycle boots clean, and
+   a fresh OTA landed — the on-LCD build tag flipped `0949 → 1228` on a board the cable can no
+   longer touch. Not fixed by the seal: `:8081` is unauthenticated and there is no
+   `SECURE_VERSION` anti-rollback, so a validly-signed *older* image could still be pushed —
+   a separate app-layer/eFuse task.
 
 **Three bugs found + fixed enabling FE** (all in the "not bench-verifiable" set):
 - `esp_storage::FlashStorage::new()` probes chip size by reading the bootloader header at
