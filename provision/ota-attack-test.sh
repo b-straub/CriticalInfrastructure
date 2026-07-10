@@ -30,11 +30,13 @@ load_creds
 [ -n "$SERIAL" ] || SERIAL="$(find_port)"
 need python3 "install Python 3"
 
-note "attack test -> $HOST:$TPORT  (base: $(basename "$IMG"), $(stat -f%z "$IMG") bytes)${SERIAL:+, serial $SERIAL}"
-python3 - "$HOST" "$TPORT" "$IMG" "$SERIAL" <<'PY'
+note "attack test -> $HOST:$TPORT  (base: $(basename "$IMG"), $(stat -f%z "$IMG") bytes)"
+echo "    NOTE: only meaningful against the HARDENED (ota-net verify) firmware. A reboot on any"
+echo "    attack means the device is running un-hardened firmware — deploy it first (ota-update.sh)."
+python3 - "$HOST" "$TPORT" "$IMG" <<'PY'
 import socket, struct, sys, time, os
 
-HOST, TPORT, IMG, SERIAL = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+HOST, TPORT, IMG = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 base = open(IMG, 'rb').read()
 if len(base) % 4096 or len(base) <= 4096:
     sys.exit("base image is not a sector-aligned signed image")
@@ -47,85 +49,69 @@ def set_version(b, v):
 def break_magic(b):
     b = bytearray(b); b[sig] = 0x00; return bytes(b)                       # sig block magic 0xe7
 
-# name, crafted bytes, expected reason substring (device logs "transfer aborted: <reason>")
+# name, crafted bytes (all bad — must be refused before activation on hardened firmware)
 attacks = [
-    ("rollback (version = 1)",      set_version(base, 1),     "version rollback rejected"),
-    ("random garbage",              os.urandom(8192),         "not an app image"),
-    ("bad length (unaligned)",      os.urandom(5000),         "bad image length"),
-    ("tampered image body",         flip(base, 5000),         "image digest mismatch"),
-    ("broken signature magic",      break_magic(base),        "sig block magic"),
-    ("untrusted signing key",       flip(base, sig + 100),    "untrusted signing key"),
-    ("tampered signature",          flip(base, sig + 900),    "PSS verify failed"),
+    ("rollback (version = 1)",   set_version(base, 1)),
+    ("random garbage",           os.urandom(8192)),
+    ("bad length (unaligned)",   os.urandom(5000)),
+    ("tampered image body",      flip(base, 5000)),
+    ("broken signature magic",   break_magic(base)),
+    ("untrusted signing key",    flip(base, sig + 100)),
+    ("tampered signature",       flip(base, sig + 900)),
 ]
 
-# optional no-reset serial capture (USB-serial-JTAG resets on DTR/RTS; hold them low)
-buf = []
-ser = None
-if SERIAL:
+def reachable(timeout=0.8):
     try:
-        import serial, threading
-        ser = serial.Serial()
-        ser.port = SERIAL; ser.baudrate = 115200; ser.dtr = False; ser.rts = False
-        ser.timeout = 0.2; ser.open()
-        stop = threading.Event()
-        def _rd():
-            while not stop.is_set():
-                try: buf.append(ser.read(512).decode('utf-8', 'replace'))
-                except Exception: pass
-        threading.Thread(target=_rd, daemon=True).start()
-        time.sleep(0.4)
-    except Exception as e:
-        print(f"  (serial capture off: {e})"); ser = None
-
-def board_up(timeout=5):
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            s = socket.create_connection((HOST, TPORT), timeout=1); s.close(); return True
-        except Exception:
-            time.sleep(0.3)
-    return False
+        s = socket.create_connection((HOST, TPORT), timeout=timeout); s.close(); return True
+    except Exception:
+        return False
 
 def push(data):
     try:
         s = socket.create_connection((HOST, TPORT), timeout=15)
         s.sendall(struct.pack('<I', len(data)))
         try: s.sendall(data)
-        except Exception: pass         # device may abort mid-send on an early reject
+        except Exception: pass          # device may abort mid-send on an early reject
         try: s.settimeout(8); s.recv(1)
         except Exception: pass
         s.close()
-    except Exception as e:
-        print(f"    push error: {e}")
+    except Exception:
+        pass
 
-if not board_up():
+# After a push, watch reachability closely. A REJECT keeps the socket server up continuously
+# (it just loops back to accept). An ACCEPT triggers software_reset -> the device is
+# unreachable for several seconds while it reboots + rejoins Wi-Fi. Longest continuous-down
+# streak >= 1.5s => it rebooted => the attack was (wrongly) accepted.
+def max_down_after_push(seconds=11.0, interval=0.25):
+    end = time.time() + seconds
+    streak = 0.0; worst = 0.0
+    while time.time() < end:
+        if reachable():
+            streak = 0.0
+        else:
+            streak += interval; worst = max(worst, streak)
+        time.sleep(interval)
+    return worst
+
+if not reachable(timeout=3):
     sys.exit("device not reachable on :%d — is it up and on Wi-Fi?" % TPORT)
 
 fails = 0
-for name, data, expect in attacks:
-    mark = len("".join(buf))
+for name, data in attacks:
     push(data)
-    time.sleep(1.3)
-    up = board_up()                                   # rejected -> still up; accepted -> rebooting
-    reason = None
-    if ser is not None:
-        tail = "".join(buf)[mark:]
-        reason = expect in tail
-    ok = up and (reason is not False)                 # reason None (no serial) doesn't fail it
-    if not ok: fails += 1
-    detail = "still up" if up else "REBOOTED (accepted!)"
-    if ser is not None:
-        detail += f", reason logged: {'yes' if reason else 'NO'}"
-    print(f"  [{'PASS' if ok else 'FAIL'}] {name:26} -> {detail}" + (f"  (want: {expect})" if not ok else ""))
-
-if ser is not None:
-    try: ser.close()
-    except Exception: pass
+    down = max_down_after_push()
+    rebooted = down >= 1.5
+    if rebooted: fails += 1
+    verdict = "REBOOTED — attack ACCEPTED" if rebooted else "no reboot — refused"
+    print(f"  [{'FAIL' if rebooted else 'PASS'}] {name:26} -> {verdict}  (down {down:.1f}s)")
+    time.sleep(0.5)
 
 print()
 if fails == 0:
-    print("ALL ATTACKS REJECTED — device never rebooted; it is still on its current firmware.")
+    print("ALL ATTACKS REFUSED — device never rebooted; still on its current firmware.")
+    print("(Watch your serial monitor for the exact reason per attack: 'transfer aborted: <why>'.)")
     sys.exit(0)
-print(f"{fails} attack(s) not properly rejected — see FAIL rows above.")
+print(f"{fails} attack(s) caused a REBOOT — un-hardened firmware, or a real acceptance. Deploy the")
+print("verifying firmware (provision/ota-update.sh) and re-run.")
 sys.exit(1)
 PY
