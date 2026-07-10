@@ -221,7 +221,9 @@ The bootloader does the decrypt-reads to pick the slot (built in). Works with or
    firmware is signed + encrypted **OTA** (`provision/ota-update.sh`) — the app encrypt-writes
    from RAM, a path these bits don't gate. **Verified post-seal:** power-cycle boots clean, and
    a fresh OTA landed — the on-LCD build tag flipped `0949 → 1228` on a board the cable can no
-   longer touch. Not fixed by the seal: `:8081` is unauthenticated and there is no
+   longer touch. Re-check the lockout anytime with **`provision/verify-seal.sh --port <dev>`**
+   (eFuse read / flash read / encrypt-write — all three reported DENIED; its write test targets
+   an unused offset so it's harmless). Not fixed by the seal: `:8081` is unauthenticated and there is no
    `SECURE_VERSION` anti-rollback, so a validly-signed *older* image could still be pushed —
    a separate app-layer/eFuse task.
 
