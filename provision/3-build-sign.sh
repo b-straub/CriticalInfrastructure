@@ -12,13 +12,17 @@
 #   --keys <a,b>        enrolled key names, first = primary, rest appended  (default: token2)
 #   --outdir <dir>      where signed images land            (default: secure-boot/out)
 #   --features <list>   cargo features (default: udp-transport,efuse-hmac-identity)
+#   --secure-version <n> anti-rollback version stamped into the app descriptor before signing
+#                       (default: current epoch seconds — monotonic per build). The device
+#                       rejects any OTA whose version is not strictly above the one it runs.
 #   --skip-bootloader   sign only the app (bootloader already built/flashed)
 source "$(dirname "$0")/lib.sh"
 
-SSID="" PASS="" SUP="" KEYS="token2" OUTDIR="$SB/out" FEATURES="udp-transport,efuse-hmac-identity" SKIPBL=0
+SSID="" PASS="" SUP="" KEYS="token2" OUTDIR="$SB/out" FEATURES="udp-transport,efuse-hmac-identity" SKIPBL=0 SECVER=""
 while [ $# -gt 0 ]; do case "$1" in
   --ssid) SSID="$2"; shift 2;; --pass) PASS="$2"; shift 2;; --supervisor) SUP="$2"; shift 2;;
   --keys) KEYS="$2"; shift 2;; --outdir) OUTDIR="$2"; shift 2;; --features) FEATURES="$2"; shift 2;;
+  --secure-version) SECVER="$2"; shift 2;;
   --skip-bootloader) SKIPBL=1; shift;; -h|--help) show_help "$0"; exit 0;;
   *) die "unknown arg: $1 (see --help)";;
 esac; done
@@ -60,6 +64,26 @@ note "3/4 build the esp-hal app (features: $FEATURES)"
        cargo build --release --no-default-features --features "$FEATURES" )
 [ -f "$ELF" ] || die "app ELF missing: $ELF"
 esptool --chip esp32s3 elf2image "$ELF" --output "$OUTDIR/app.bin"
+
+# Stamp the anti-rollback version into the app descriptor (esp_app_desc.secure_version) BEFORE
+# signing, so the RSA signature covers it and the device can trust it. The esp_app_desc macro
+# hardcodes this field to 0, so we patch it here. Default = epoch seconds (monotonic per build).
+[ -n "$SECVER" ] || SECVER="$(date +%s)"
+note "3b/4 stamp secure_version = $SECVER into app.bin (anti-rollback)"
+python3 - "$OUTDIR/app.bin" "$SECVER" <<'PY'
+import sys, struct
+path, ver = sys.argv[1], int(sys.argv[2])
+if not (0 < ver <= 0xFFFFFFFF):
+    sys.exit(f"secure-version {ver} out of u32 range")
+data = bytearray(open(path, 'rb').read())
+MAGIC, OFF = 0xABCD5432, 0x20            # app_desc magic @0x20, secure_version @0x24
+got = struct.unpack_from('<I', data, OFF)[0]
+if got != MAGIC:
+    sys.exit(f"app_desc magic {got:#010x} != {MAGIC:#010x} at {OFF:#x} — image layout changed")
+struct.pack_into('<I', data, OFF + 4, ver)
+open(path, 'wb').write(data)
+print(f"  secure_version = {ver} stamped at {OFF + 4:#x}")
+PY
 
 note "4/4 sign the app -> $OUTDIR/app-signed.bin"
 sign "$OUTDIR/app.bin" "$OUTDIR/app-signed.bin"

@@ -14,6 +14,8 @@ const STORAGE_BASE: u32 = 0x200000; // must match secure-boot/partitions.csv (SS
 const ROLES_OFF: u32 = 0x0;
 const OTA_STATE_OFF: u32 = 0x10000;
 const THRESHOLD_OFF: u32 = 0x20000;
+#[cfg(feature = "ota-net")]
+const VERSION_OFF: u32 = 0x28000; // anti-rollback floor (own sector, within the 0x30000 partition)
 const SECTOR: usize = 4096;
 
 /// Word-aligned sector buffer (the ROM flash functions take `*u32`).
@@ -87,6 +89,28 @@ pub fn save_threshold(val: f32) {
     let mut page = Page([0xFFu8; SECTOR]);
     page.0[0..4].copy_from_slice(&val.to_le_bytes());
     let _ = write_page(THRESHOLD_OFF, &page);
+}
+
+/// Load the anti-rollback floor: the highest firmware `secure_version` installed so far.
+/// Blank flash reads as all-ones, which we treat as 0 (no floor yet).
+#[cfg(feature = "ota-net")]
+pub(crate) fn load_min_version() -> u32 {
+    let mut page = Page([0u8; SECTOR]);
+    if read_page(VERSION_OFF, &mut page) {
+        let v = u32::from_le_bytes([page.0[0], page.0[1], page.0[2], page.0[3]]);
+        if v != u32::MAX {
+            return v;
+        }
+    }
+    0
+}
+
+/// Persist a new anti-rollback floor (called after installing a higher version).
+#[cfg(feature = "ota-net")]
+pub(crate) fn save_min_version(v: u32) {
+    let mut page = Page([0xFFu8; SECTOR]);
+    page.0[0..4].copy_from_slice(&v.to_le_bytes());
+    let _ = write_page(VERSION_OFF, &page);
 }
 
 /// Read the 32-byte OTA-state journal (format owned by `ota.rs`).

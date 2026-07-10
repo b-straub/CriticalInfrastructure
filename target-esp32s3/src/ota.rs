@@ -297,6 +297,13 @@ pub async fn server_task(stack: embassy_net::Stack<'static>) {
 }
 
 /// Receive a length-prefixed image and install it into the inactive slot. Returns bytes written.
+///
+/// Anti-rollback: the incoming image's `secure_version` (from its app descriptor) must be
+/// strictly above the floor — the max of the highest version we've installed (`storage`) and
+/// the running image's own version. The check runs before the first sector is written, so an
+/// older or non-app payload is rejected at the door (nothing touches flash). This is the only
+/// firmware-write path on a sealed board, so it closes downgrade completely; the cable is shut
+/// (seal) and a swapped flash chip won't decrypt (flash encryption).
 #[cfg(feature = "ota-net")]
 async fn receive_and_install(
     sock: &mut embassy_net::tcp::TcpSocket<'_>,
@@ -307,21 +314,25 @@ async fn receive_and_install(
     if total == 0 || total > SLOT_SIZE {
         return Err("bad image length");
     }
+    let min = core::cmp::max(crate::storage::load_min_version(), own_secure_version());
+
     let target = 1 - booted_slot();
     let base = slot_offset(target);
     let encrypted = fe();
     info!(
-        "OTA: receiving {} bytes into slot {} @ {:#x}{}",
+        "OTA: receiving {} bytes into slot {} @ {:#x}{} (rollback floor v{})",
         total,
         target,
         base,
-        if encrypted { " [encrypted]" } else { "" }
+        if encrypted { " [encrypted]" } else { "" },
+        min
     );
 
     let mut sector = AlignedSector([0u8; SECTOR]);
     let mut filled = 0usize;
     let mut written = 0u32;
     let mut remaining = total as usize;
+    let mut version = 0u32;
     while remaining > 0 {
         let want = core::cmp::min(SECTOR - filled, remaining);
         let n = sock
@@ -334,12 +345,18 @@ async fn receive_and_install(
         filled += n;
         remaining -= n;
         if filled == SECTOR {
+            if written == 0 {
+                version = check_app_desc(&sector.0, min)?; // reject before the first flash write
+            }
             put_sector(base + written, &mut sector, encrypted);
             written += SECTOR as u32;
             filled = 0;
         }
     }
     if filled > 0 {
+        if written == 0 {
+            version = check_app_desc(&sector.0, min)?;
+        }
         for b in sector.0[filled..].iter_mut() {
             *b = 0xFF;
         }
@@ -347,7 +364,33 @@ async fn receive_and_install(
     }
 
     commit_pending(target);
+    crate::storage::save_min_version(version);
     Ok(total)
+}
+
+/// The running image's `secure_version`, read volatile through a raw pointer so it reflects
+/// the value patched into flash at sign time (`app_desc + 0x4`) rather than the macro's
+/// compile-time 0. Layout: `magic_word: u32` @0, `secure_version: u32` @4 (`repr(C)`).
+#[cfg(feature = "ota-net")]
+fn own_secure_version() -> u32 {
+    unsafe {
+        core::ptr::read_volatile((core::ptr::addr_of!(crate::ESP_APP_DESC) as *const u32).add(1))
+    }
+}
+
+/// Validate the first received sector carries a genuine app descriptor and a version above the
+/// floor. app_desc magic `0xABCD5432` @0x20, `secure_version` @0x24 (esp_app_desc layout).
+#[cfg(feature = "ota-net")]
+fn check_app_desc(sector: &[u8; SECTOR], min: u32) -> Result<u32, &'static str> {
+    let magic = u32::from_le_bytes([sector[0x20], sector[0x21], sector[0x22], sector[0x23]]);
+    if magic != 0xABCD_5432 {
+        return Err("not an app image (bad app_desc magic)");
+    }
+    let version = u32::from_le_bytes([sector[0x24], sector[0x25], sector[0x26], sector[0x27]]);
+    if version <= min {
+        return Err("version rollback rejected");
+    }
+    Ok(version)
 }
 
 #[cfg(feature = "ota-net")]
