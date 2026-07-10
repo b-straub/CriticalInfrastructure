@@ -21,6 +21,14 @@ struct ContentView: View {
                             Label("Switch", systemImage: "arrow.left.arrow.right")
                         }
                     }
+                    #if os(macOS)
+                    Button {
+                        model.showShowcase.toggle()
+                    } label: {
+                        Image(systemName: "wrench.and.screwdriver")
+                    }
+                    .help("Provisioning & security showcase")
+                    #endif
                     Button {
                         model.showConfig.toggle()
                     } label: {
@@ -32,7 +40,9 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var content: some View {
-        if model.showConfig {
+        if model.showShowcase {
+            ShowcasePanel(model: model)
+        } else if model.showConfig {
             ConfigForm(model: model)
         } else if model.hardwareMode {
             HardwarePanel(model: model)
@@ -48,6 +58,7 @@ struct ContentView: View {
     }
 
     private var title: String {
+        if model.showShowcase { return "Showcase" }
         if model.showConfig { return "Settings" }
         if model.hardwareMode { return "Hardware Key" }
         if let role = model.activeRole { return role.rawValue }
@@ -72,6 +83,24 @@ private struct ConfigForm: View {
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
             }
+            #if os(macOS)
+            Section("Provisioning") {
+                HStack {
+                    Text(model.config.repoPath.isEmpty ? "No repo selected" : model.config.repoPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(model.config.repoPath.isEmpty ? .secondary : .primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("Choose…") { chooseRepo() }
+                }
+                if !model.config.repoPath.isEmpty && !repoValid {
+                    Label("provision/lib.sh not found here", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            #endif
             Section {
                 Button("Save") { model.saveConfig() }
                     .disabled(model.config.needsSetup)
@@ -79,6 +108,24 @@ private struct ConfigForm: View {
         }
         .formStyle(.grouped)
     }
+
+    #if os(macOS)
+    private var repoValid: Bool {
+        FileManager.default.fileExists(atPath: model.config.repoPath + "/provision/lib.sh")
+    }
+
+    private func chooseRepo() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Select repo"
+        if panel.runModal() == .OK, let url = panel.url {
+            model.config.repoPath = url.path
+            model.config.save()   // persist without the needsSetup side-effect (keeps Settings open)
+        }
+    }
+    #endif
 }
 
 // MARK: - Identity picker  (a: register supervisor · c: pick identity)
@@ -277,7 +324,7 @@ private struct OperatorPanel: View {
 
 // MARK: - Reusable components
 
-private struct CenteredColumn<Content: View>: View {
+struct CenteredColumn<Content: View>: View {
     var maxWidth: CGFloat = 560
     @ViewBuilder let content: Content
 

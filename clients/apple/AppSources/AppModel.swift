@@ -16,6 +16,8 @@ final class AppModel {
     var lastResponse: String?
     var busy = false
     var showConfig: Bool
+    /// True while the provisioning & security showcase panel is shown (macOS).
+    var showShowcase = false
     /// Compressed pubkey of an inserted PIV / hardware key, if any.
     var hardwareKeyPubHex: String?
     /// True while acting via a hardware key (its device role is enforced remotely).

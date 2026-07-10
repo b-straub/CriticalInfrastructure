@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		4C32A6EE3437323A7514B0B4 /* RoleStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5FFA1F62BC194BA0E99B849 /* RoleStyle.swift */; };
+		5056638BE83E2F1F3057A943 /* ShowcasePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67F4DE306F0EB06893E34BE5 /* ShowcasePanel.swift */; };
+		797A49FB774C7F5AE8A688B0 /* ScriptRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40DBF634D57D7C679477B24F /* ScriptRunner.swift */; };
+		36AC7CECA938AB5255D62420 /* TerminalLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23668EC783E9D766D58EC385 /* TerminalLauncher.swift */; };
 		63EFD7C614B9FEE421F8D13C /* CriticalInfraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 221F9F53106E554958009007 /* CriticalInfraApp.swift */; };
 		686AA57AEA74D80280CA1274 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D707DD6936DC9243026F6249 /* AppModel.swift */; };
 		996BDFAD4999673CE8CAC823 /* CriticalInfraKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8F482D766DD2D70160FDE57B /* CriticalInfraKit */; };
@@ -23,6 +26,9 @@
 		C3C7412B2FFEB17E00077D27 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D707DD6936DC9243026F6249 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		F5FFA1F62BC194BA0E99B849 /* RoleStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleStyle.swift; sourceTree = "<group>"; };
+		67F4DE306F0EB06893E34BE5 /* ShowcasePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShowcasePanel.swift; sourceTree = "<group>"; };
+		40DBF634D57D7C679477B24F /* ScriptRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptRunner.swift; sourceTree = "<group>"; };
+		23668EC783E9D766D58EC385 /* TerminalLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalLauncher.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -55,6 +61,9 @@
 				8AB4A04D0D632889F66854D9 /* ContentView.swift */,
 				221F9F53106E554958009007 /* CriticalInfraApp.swift */,
 				F5FFA1F62BC194BA0E99B849 /* RoleStyle.swift */,
+				67F4DE306F0EB06893E34BE5 /* ShowcasePanel.swift */,
+				40DBF634D57D7C679477B24F /* ScriptRunner.swift */,
+				23668EC783E9D766D58EC385 /* TerminalLauncher.swift */,
 			);
 			path = AppSources;
 			sourceTree = "<group>";
@@ -161,6 +170,9 @@
 				CB7227801ADBFD81AF4222D7 /* ContentView.swift in Sources */,
 				63EFD7C614B9FEE421F8D13C /* CriticalInfraApp.swift in Sources */,
 				4C32A6EE3437323A7514B0B4 /* RoleStyle.swift in Sources */,
+				5056638BE83E2F1F3057A943 /* ShowcasePanel.swift in Sources */,
+				797A49FB774C7F5AE8A688B0 /* ScriptRunner.swift in Sources */,
+				36AC7CECA938AB5255D62420 /* TerminalLauncher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
