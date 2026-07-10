@@ -6,7 +6,16 @@ CONFIG_SECURE_BOOT=y
 CONFIG_SECURE_BOOT_V2_ENABLED=y
 CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n
 CONFIG_SECURE_BOOT_ENABLE_AGGRESSIVE_KEY_REVOKE=n
-CONFIG_SECURE_FLASH_ENC_ENABLED=n
+
+# Flash encryption (4.5). The bootloader encrypts flash in place on first boot and
+# auto-generates + burns the XTS-AES key. AES-256 (512-bit) uses two free key blocks
+# (KEY3/KEY4; KEY0=HMAC identity, KEY1/2=secure-boot digests). DEVELOPMENT mode keeps a
+# recovery path (UART can still write plaintext, which the bootloader re-encrypts);
+# switch to RELEASE only after validating OTA under encryption. See docs/formal/OTA.md.
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_AES256=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=y
+
 # The secure-boot bootloader is ~0x9000 bytes and overruns the default 0x8000
 # partition-table offset — bump it (shifts the whole flash layout; the app in
 # Phase B must match this partition table).
