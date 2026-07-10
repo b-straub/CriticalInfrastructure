@@ -47,6 +47,7 @@ compile_error!("enable one transport: `http-transport` (default) or `udp-transpo
 async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
     info!("Starting...");
+    info!("Firmware {} built {}", env!("FW_VERSION"), env!("FW_BUILD"));
     if let Some(raw_hex_str) = option_env!("SUPERVISOR_PUBKEY") {
         let hex_str = raw_hex_str.trim();
         info!("SSOT Supervisor PubKey ({} chars): {}", hex_str.len(), hex_str);
@@ -212,7 +213,11 @@ async fn main(spawner: Spawner) {
                     lcd.set_cursor_pos((0, 1));
                     let mut status_str = heapless::String::<16>::new();
                     if let Some((temp, hum)) = reading {
-                        let _ = write!(&mut status_str, "{:.1}C {:.0}% RH  ", temp, hum);
+                        // compact temp/humidity + build tag, e.g. "25.9C 48%H 0945"
+                        let _ = write!(&mut status_str, "{:.1}C {:.0}%H {}", temp, hum, env!("FW_HHMM"));
+                        while status_str.len() < 16 {
+                            let _ = status_str.push(' ');
+                        }
                         unsafe {
                             LAST_TEMP = temp;
                             LAST_RH = hum;
