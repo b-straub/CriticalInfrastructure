@@ -167,11 +167,25 @@ It keeps the current bootloader/partition layout (`--skip-bootloader`); on an en
 board the firmware encrypt-writes the image. Confirm it landed by the LCD build tag (line
 2, `HHMM`) or the serial `Firmware <hash> built …` line changing.
 
-**Security (deferred, tracked):** `:8081` is unauthenticated. Secure Boot is the
-integrity backstop — a tampered/garbage image won't boot and rolls back — but a LAN
-attacker could force reboots or push an older *validly signed* image. Next: gate the
-trigger through the authenticated supervisor channel, and add anti-rollback
-(`SECURE_VERSION`).
+**Security — hardened (`ota-net`).** `:8081` no longer trusts the wire, using the one
+trust anchor that already exists — the RSA-3072 Secure Boot key (no separate OTA key; a
+compromised key is handled by Secure Boot v2 **revocation**, which is why two are enrolled):
+
+- **Authenticity, before activation.** The receive path verifies the incoming image's own
+  Secure Boot v2 (RSA-3072-PSS) signature against the trusted `SECURE_BOOT_DIGEST`(s) — baked
+  into the app from the enrolled keys — *before* `commit_pending`. A garbage or unsigned push
+  is written to the inactive slot but **never booted**: no reboot churn (`bootsig.rs`).
+- **Anti-rollback.** The image's `secure_version` (stamped into the app descriptor before
+  signing, so the RSA signature covers it) must be strictly above the floor — the max of the
+  highest version installed (persisted in `storage`) and the running image's own. Downgrade to
+  an older *validly-signed* image is rejected at the door.
+
+On a sealed board OTA is the only firmware-write path, so these two close the wire-side gaps
+completely; the cable is shut (seal) and a swapped flash chip won't decrypt (flash encryption).
+The verify + full integration path (sector-chunked hashing, digest bake, PSS) were validated on
+host against the real signed image and real burned digests. Residual: a raw TCP connection flood
+is a generic availability concern, not OTA-specific. Multi-key images: the primary (first) block
+is checked, which matches the single-key `ota-update.sh` flow.
 
 ## Phase 5 — flash encryption (4.5, ✅ complete — Dev-encrypted, network-OTA verified, Release-sealed)
 
