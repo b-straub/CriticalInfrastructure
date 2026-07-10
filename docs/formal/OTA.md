@@ -206,9 +206,21 @@ The bootloader does the decrypt-reads to pick the slot (built in). Works with or
    `receiving … [encrypted]` → encrypt-written to `ota_1` → decrypted + booted → *slot 1
    marked Valid* and stable across reset. Dev-mode reflash is `esptool write-flash --encrypt`
    (repeatable). Once encrypted, the app updates itself over the air with no cable.
-4. ⏳ **Release** mode (final seal): rebuild bootloader Release; re-provision; burn
-   `ENABLE_SECURITY_DOWNLOAD`. Then only signed **and** encrypted firmware boots/flashes;
-   OTA-only; flash confidential.
+4. ⏳ **Release seal (stage D) — `provision/6-release-seal.sh`.** No bootloader rebuild or
+   re-provision: an already Dev-encrypted board graduates by burning three lock bits
+   directly. On the live board (`usbmodem5B7A1147281`) all other hardening is already
+   done — Secure Boot on, HMAC identity burned + read-protected (`KEY_PURPOSE_0=HMAC_UP`),
+   JTAG off (`DIS_PAD_JTAG`/`DIS_USB_JTAG`) — so only these remain pending:
+   - `SPI_BOOT_CRYPT_CNT` `0b001 → 0b111` — ROM won't re-encrypt flash (kills `write-flash --encrypt`); encryption stays on.
+   - `DIS_DOWNLOAD_MANUAL_ENCRYPT` `0 → 1` — UART can't encrypt-write.
+   - `ENABLE_SECURITY_DOWNLOAD` `0 → 1` — UART download can't read/dump/erase flash or eFuses.
+
+   After this the **cable can no longer decrypt, dump, or reflash**; the only way to change
+   firmware is signed + encrypted **OTA** (`provision/ota-update.sh`) — the app encrypt-writes
+   from RAM, a path these bits don't gate. Irreversible; the script dry-runs by default and
+   only burns with `--yes-burn`. Not fixed by the seal: `:8081` is unauthenticated and there
+   is no `SECURE_VERSION` anti-rollback, so a validly-signed *older* image could still be
+   pushed — a separate app-layer/eFuse task.
 
 **Three bugs found + fixed enabling FE** (all in the "not bench-verifiable" set):
 - `esp_storage::FlashStorage::new()` probes chip size by reading the bootloader header at
