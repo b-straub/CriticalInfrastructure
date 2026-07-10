@@ -229,6 +229,10 @@ The bootloader does the decrypt-reads to pick the slot (built in). Works with or
    - `SPI_BOOT_CRYPT_CNT` `0b001 → 0b111` — ROM won't re-encrypt flash (kills `write-flash --encrypt`); encryption stays on.
    - `DIS_DOWNLOAD_MANUAL_ENCRYPT` `0 → 1` — UART can't encrypt-write.
    - `ENABLE_SECURITY_DOWNLOAD` `0 → 1` — UART download can't read/dump/erase flash or eFuses.
+   - `DIS_USB_SERIAL_JTAG` `0 → 1` — **optional `--kill-console`**: the whole USB-serial-JTAG
+     peripheral off (no serial console, no USB port). Safe now that OTA reports its verdict
+     in-band over TCP. On a **fresh** unit only — an already-sealed board has Secure Download on,
+     so espefuse can no longer add it.
 
    The cable can no longer decrypt, dump, or reflash — proven by espefuse itself now refusing
    ("Secure download mode is enabled. espefuse can not continue"). The only way to change
@@ -237,9 +241,8 @@ The bootloader does the decrypt-reads to pick the slot (built in). Works with or
    a fresh OTA landed — the on-LCD build tag flipped `0949 → 1228` on a board the cable can no
    longer touch. Re-check the lockout anytime with **`provision/verify-seal.sh --port <dev>`**
    (eFuse read / flash read / encrypt-write — all three reported DENIED; its write test targets
-   an unused offset so it's harmless). Not fixed by the seal: `:8081` is unauthenticated and there is no
-   `SECURE_VERSION` anti-rollback, so a validly-signed *older* image could still be pushed —
-   a separate app-layer/eFuse task.
+   an unused offset so it's harmless). The wire-side gaps are now closed too (see the `ota-net`
+   security note above): receive-time Secure Boot signature verify + `secure_version` anti-rollback.
 
 **Three bugs found + fixed enabling FE** (all in the "not bench-verifiable" set):
 - `esp_storage::FlashStorage::new()` probes chip size by reading the bootloader header at

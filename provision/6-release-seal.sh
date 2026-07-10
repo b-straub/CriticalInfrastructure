@@ -8,8 +8,12 @@
 #   provision/6-release-seal.sh                       # dry run: rehearse + read live state
 #   provision/6-release-seal.sh --port /dev/cu.XXXX --yes-burn   # REAL burns (permanent)
 #
-#   --port <dev>   board in download mode (auto-detected if omitted)
-#   --yes-burn     actually burn (otherwise rehearse on a virtual eFuse + read the chip)
+#   --port <dev>    board in download mode (auto-detected if omitted)
+#   --yes-burn      actually burn (otherwise rehearse on a virtual eFuse + read the chip)
+#   --kill-console  ALSO burn DIS_USB_SERIAL_JTAG — removes the USB serial console entirely (no
+#                   more logs; the USB port disappears). Do it while sealing a FRESH unit; an
+#                   already-sealed board has Secure Download on, so espefuse can no longer add it.
+#                   Safe now that OTA reports its verdict in-band over TCP (nothing needs serial).
 #
 # Seal bits (why each):
 #   SPI_BOOT_CRYPT_CNT=7           max the counter -> ROM won't re-encrypt flash (kills
@@ -17,22 +21,28 @@
 #   DIS_DOWNLOAD_MANUAL_ENCRYPT=1  UART downloader can no longer encrypt-write.
 #   ENABLE_SECURITY_DOWNLOAD=1     UART download can't read/dump/erase flash or eFuses.
 #                                  (Usually already set by provision/2 — then this is a no-op.)
+#   DIS_USB_SERIAL_JTAG=1          (--kill-console) the whole USB-serial-JTAG peripheral off —
+#                                  no serial console, no USB port. JTAG is already off via provision/2.
 # OTA is unaffected: it's the running app encrypt-writing from RAM, a path these bits don't gate.
 source "$(dirname "$0")/lib.sh"
 
-PORT="" BURN=0
+PORT="" BURN=0 KILLCON=0
 while [ $# -gt 0 ]; do case "$1" in
-  --port) PORT="$2"; shift 2;; --yes-burn) BURN=1; shift;;
+  --port) PORT="$2"; shift 2;; --yes-burn) BURN=1; shift;; --kill-console) KILLCON=1; shift;;
   -h|--help) show_help "$0"; exit 0;;
   *) die "unknown arg: $1 (see --help)";;
 esac; done
 need espefuse "brew install esptool"
 [ -n "$PORT" ] || PORT="$(find_port)"
 
-# One espefuse session burns all three; ENABLE_SECURITY_DOWNLOAD only takes effect after the
+# One espefuse session burns all of these; ENABLE_SECURITY_DOWNLOAD only takes effect after the
 # next reset, so there's no mid-session self-lockout.
 SEAL=( SPI_BOOT_CRYPT_CNT 7 DIS_DOWNLOAD_MANUAL_ENCRYPT 1 ENABLE_SECURITY_DOWNLOAD 1 )
 GREP='SPI_BOOT_CRYPT_CNT|DIS_DOWNLOAD_MANUAL_ENCRYPT|ENABLE_SECURITY_DOWNLOAD|SECURE_BOOT_EN'
+if [ "$KILLCON" = 1 ]; then
+  SEAL+=( DIS_USB_SERIAL_JTAG 1 )                 # final lockdown: no serial console / USB port
+  GREP="$GREP|DIS_USB_SERIAL_JTAG"
+fi
 
 if [ "$BURN" != 1 ]; then
   note "DRY RUN — rehearse the seal on a virtual ESP32-S3 (no hardware writes)"
