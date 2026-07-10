@@ -17,8 +17,8 @@ This project demonstrates that it is now possible to build *impenetrable* embedd
 
 ### Features
 *   **Memory-Safe Firmware:** 100% Rust (`no_std`) — no buffer overflows, no memory corruption.
-*   **Hardware Cryptographic RBAC:** every command carries a hardware-held client signature — **Ed25519** on the web/HTTP flavor, **P-256** on the native/UDP flavor — and the device verifies a supervisor→role certificate chain before acting.
-*   **Two transports, one crypto core:** a browser dashboard (HTTP + **WebAuthn-PRF** passkeys) and a native macOS client (UDP + **Secure Enclave** or a **Token2 PIV** hardware key) share one signed + encrypted command envelope — see [`clients/apple`](clients/apple).
+*   **Hardware Cryptographic RBAC:** every command carries a hardware-held **P-256** client signature — from a Mac's **Secure Enclave** (Touch ID) or a **Token2 PIV** hardware key — and the device verifies a supervisor→role certificate chain before acting.
+*   **Native client, encrypted envelope:** a **SwiftUI macOS app** drives the device over a raw UDP command protocol — one signed + encrypted envelope (X25519 + AES-GCM + Ed25519), machine-checked in Tamarin — see [`clients/apple`](clients/apple).
 *   **Hardware-Rooted Device Identity (burned + validated):** the device's X25519/Ed25519 keys are derived at boot from a **read-protected eFuse HMAC key** — the root never touches software and can't be cloned, even with physical access. On the reference board this is burned, with **JTAG disabled**; the secure-download read-lock and flash encryption are documented as the final seal.
 *   **HSM Secure-Boot Signing (validated):** RSA-3072-PSS Secure Boot v2 images are signed by a **Token2 PIV** key via OpenSC PKCS#11 — the private key never leaves the token (signed + verified end-to-end). Full Secure Boot v2 enablement (signed ESP-IDF bootloader + the irreversible digest/enable burns) is the documented last step.
 
@@ -88,65 +88,24 @@ Both are standard **PIV** smart cards reached via OpenSC PKCS#11. A Mac's Secure
 ### Prerequisites
 
 - Rust + the Espressif toolchain via [`espup`](https://github.com/esp-rs/espup): `espup install`, then `source ~/export-esp.sh` (used only for the firmware; the toolchain is pinned by `rust-toolchain.toml`)
-- `cargo install espflash trunk` and `rustup target add wasm32-unknown-unknown`
-- `php` (for the dashboard's HTTP→device proxy)
+- `cargo install espflash`
+- Xcode (to build the SwiftUI macOS client)
 
 ### 1. Flash the firmware
 
 ```sh
-./flash.sh <WIFI_SSID> <WIFI_PASSWORD> <SUPERVISOR_PUBKEY_HEX>
-```
-
-Wi-Fi credentials and the trusted supervisor key are baked in at compile time (`option_env!`) — never stored in the repo. On boot the device prints three public keys over serial; note them for step 2:
-
-```
-SSOT Supervisor PubKey:                <the key you flashed>
-ESP32 Ed25519 Response-Signing PubKey: <64 hex chars>
-ESP32 X25519 PubKey:                   <64 hex chars>
-```
-
-### 2. Run the dashboard
-
-```sh
-./run_dashboard.sh    # builds + serves the Leptos webapp on http://localhost and opens your browser
-```
-
-Served on `http://localhost` (a WebAuthn secure context, so no HTTPS needed) and the app talks to the device's HTTP endpoint directly — no proxy. Click **Register New Passkey** (WebAuthn PRF), then fill the connection panel — nothing is hardcoded, and the values persist in the browser's LocalStorage:
-
-| Field | Value |
-|-------|-------|
-| ESP32 IP | shown on the LCD |
-| ESP32 ROM Pubkey | the **X25519** key from the boot log |
-| ESP32 Sig Pubkey | the **Ed25519 Response-Signing** key from the boot log |
-| Supervisor Pubkey | your supervisor public key |
-
-### Hosting: local vs. remote
-
-The dashboard is a **static WASM bundle** (`trunk build` → `dist/`) that talks to the device over HTTP. Two browser rules decide where you can host it:
-
-- **WebAuthn needs a secure context** — satisfied by `https://` **or** `http://localhost`.
-- **A page can only reach its own security level** — an `https://` page may not call a plaintext `http://` device (mixed content). Browser code also can't open a raw TCP socket at all, which is why the firmware serves HTTP rather than a bare socket. The command envelope is end-to-end encrypted and signed (X25519 + AES-GCM + Ed25519), so plaintext HTTP transport leaks nothing and can't be forged — **no TLS to the device is required**.
-
-**Local (recommended — zero infrastructure).** `./run_dashboard.sh` serves the bundle from `http://localhost`. That's a secure context (WebAuthn works) *and* an http origin (so it may `fetch("http://<device>:8080/")` directly). Enter the device's LAN IP — done. No proxy, no HTTPS, no certificate.
-
-**Remote / off-LAN.** As soon as the app is served over HTTPS (a public host, GitHub Pages, …), the browser forbids it from calling a plaintext device — so the *device* needs an HTTPS front (a tunnel or reverse proxy; impractical to run on the ESP itself). Separately, whatever hosts that front must have a network route to the device — the browser is never the one connecting to it.
-
-| App served at | WebAuthn | Reach the device by |
-|---|---|---|
-| `http://localhost` (this repo's default) | ✅ localhost is a secure context | its **LAN IP** directly — no proxy |
-| `http://<lan-ip>` (another LAN box) | ❌ not a secure context | works, but WebAuthn needs a local cert |
-| `https://…` (remote / GitHub Pages) | ✅ | an **`https://` front** for the device (tunnel / reverse proxy) |
-
-Reachability for the remote case is pure networking — a VPN into the device's network, or a routable public IP / DynDNS + port-forward (carrier LTE is usually CGNAT, so an outbound tunnel like Cloudflare/Tailscale is the robust option). The app itself never changes; it just points at wherever the device is reachable.
-
-### Native macOS client (UDP flavor)
-
-Instead of the browser, drive the device from a native **SwiftUI macOS app** over UDP — signatures come from this Mac's **Secure Enclave** (Touch ID) or a **Token2 PIV** hardware key, with no domain/passkey ceremony. Flash the UDP ROM flavor and open the app:
-
-```sh
 ./flash-udp.sh <WIFI_SSID> <WIFI_PASSWORD> <SUPERVISOR_P256_PUBKEY_66HEX>
+```
+
+Wi-Fi credentials and the trusted supervisor key (P-256, 66-hex compressed) are baked in at compile time (`option_env!`) — never stored in the repo. On boot the device prints its public keys over serial and shows its DHCP IP on the LCD.
+
+### 2. Drive it from the macOS app
+
+```sh
 open clients/apple/CriticalInfra.xcodeproj    # ⌘R (destination: My Mac)
 ```
+
+A native **SwiftUI macOS app** drives the device over UDP — every command is signed by this Mac's **Secure Enclave** (Touch ID) or a **Token2 PIV** hardware key, then wrapped in the encrypted envelope. Enter the device's LAN IP (shown on the LCD) and the public keys from the boot log; nothing is hardcoded.
 
 The **supervisor** identity can be a portable **Token2 PIV** key (ECCP256 in slot 9c, PIN per command) rather than a Mac-bound enclave key — the same card that signs Secure Boot v2 images (RSA-3072 in slot 9a). Full walkthrough — hardware-key provisioning, the macOS CryptoTokenKit gotchas, Touch ID — in [`clients/apple/README.md`](clients/apple/README.md).
 

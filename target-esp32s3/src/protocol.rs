@@ -1,12 +1,10 @@
-//! Transport-independent command processing.
+//! Command processing.
 //!
-//! Decrypt the envelope, verify the client's signature (via `clientauth`, which
-//! is Ed25519 on the HTTP flavor and P-256 on the UDP flavor) against the
-//! supervisor key or a provisioned role, run the authorized command, and build
-//! the signed, encrypted response. This is the single source of truth for the
-//! security-critical path: both the HTTP (`http-transport`) and UDP
-//! (`udp-transport`) serve loops call `process_envelope`, so the crypto lives in
-//! exactly one place.
+//! Decrypt the envelope, verify the client's P-256 signature (via `clientauth`)
+//! against the supervisor key or a provisioned role, run the authorized command,
+//! and build the signed, encrypted response. This is the single source of truth
+//! for the security-critical path: the UDP serve loop calls `process_envelope`,
+//! so the crypto lives in exactly one place.
 
 use ed25519_dalek::SigningKey;
 use esp_hal::rng::Rng;
@@ -42,8 +40,8 @@ pub fn process_envelope(
 ) -> ProcessResult {
     use core::fmt::Write as _;
 
-    // Compile-time supervisor trust anchor (Ed25519 32 bytes on HTTP, P-256
-    // compressed 33 bytes on UDP -- length from clientauth::CLIENT_PK_HEX_LEN).
+    // Compile-time supervisor trust anchor (P-256 compressed, 33 bytes --
+    // length from clientauth::CLIENT_PK_HEX_LEN).
     let mut supervisor_key = heapless::Vec::<u8, 33>::new();
     if let Some(raw_hex_str) = option_env!("SUPERVISOR_PUBKEY") {
         let hex_str = raw_hex_str.trim();

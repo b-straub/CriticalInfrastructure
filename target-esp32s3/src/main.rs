@@ -28,8 +28,6 @@ mod bootsig;
 mod clientauth;
 mod commands;
 mod crypto;
-#[cfg(feature = "http-transport")]
-mod http;
 mod identity;
 mod net;
 mod ota;
@@ -39,11 +37,9 @@ mod state;
 mod storage;
 use crate::state::*;
 
-// Exactly one transport flavor per ROM (see Cargo.toml / UDP-TRANSPORT.md).
-#[cfg(all(feature = "http-transport", feature = "udp-transport"))]
-compile_error!("enable exactly one transport: `http-transport` OR `udp-transport`");
-#[cfg(not(any(feature = "http-transport", feature = "udp-transport")))]
-compile_error!("enable one transport: `http-transport` (default) or `udp-transport`");
+// The device speaks the native UDP transport (see Cargo.toml / UDP-TRANSPORT.md).
+#[cfg(not(feature = "udp-transport"))]
+compile_error!("enable the `udp-transport` feature");
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -263,74 +259,7 @@ async fn main(spawner: Spawner) {
         }
     };
 
-    // ---- HTTP flavor: one browser-reachable TCP connection at a time --------
-    #[cfg(feature = "http-transport")]
-    {
-        let mut rx_buffer = [0; 4096];
-        let mut tx_buffer = [0; 4096];
-
-        loop {
-            let mut socket =
-                embassy_net::tcp::TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-            socket.set_timeout(Some(Duration::from_secs(10)));
-
-            info!("HTTP listening on :{}...", SUPERVISOR_PORT);
-
-            // Keep the accept future ALIVE across idle ticks (pinned + select) so
-            // the socket never stops listening. A browser SYN that lands while
-            // accept is dropped/re-armed would be lost; here the task stays parked
-            // in accept() and the idle sensor/LED runs on the timer branch.
-            let connected = {
-                let mut accept = core::pin::pin!(socket.accept(SUPERVISOR_PORT));
-                loop {
-                    use embassy_futures::select::{select, Either};
-                    match select(
-                        accept.as_mut(),
-                        Timer::after(Duration::from_millis(250)),
-                    )
-                    .await
-                    {
-                        Either::First(Ok(())) => break true,
-                        Either::First(Err(e)) => {
-                            info!("Accept error: {:?}", e);
-                            break false;
-                        }
-                        Either::Second(_) => render(Render::Idle),
-                    }
-                }
-            };
-
-            if !connected {
-                continue;
-            }
-
-            info!("Accepted connection from {:?}", socket.remote_endpoint());
-            let mut buf = [0; 1024];
-
-            match http::read_request(&mut socket, &mut buf).await {
-                Some(http::Request::Preflight) => {
-                    http::write_preflight(&mut socket).await;
-                }
-                Some(http::Request::Post(body)) => {
-                    let payload = core::str::from_utf8(&body).unwrap_or("");
-                    info!("Received payload: {}", payload);
-                    let result = protocol::process_envelope(
-                        payload,
-                        &esp_x25519_secret,
-                        &esp_signing_key,
-                        &mut rng,
-                    );
-                    render(Render::Command(&result));
-                    http::write_response(&mut socket, &result.response).await;
-                }
-                _ => {}
-            }
-            socket.close();
-        }
-    }
-
-    // ---- UDP flavor: connectionless datagrams for native clients -----------
-    #[cfg(feature = "udp-transport")]
+    // ---- UDP transport: connectionless datagrams for native clients --------
     {
         use embassy_net::udp::{PacketMetadata, UdpSocket};
 
@@ -358,8 +287,7 @@ async fn main(spawner: Spawner) {
         let mut buf = [0u8; 2048];
         loop {
             // One datagram = one command. The idle sensor/LED runs on the 250ms
-            // timer branch while recv_from stays parked (same shape as the HTTP
-            // accept loop above).
+            // timer branch while recv_from stays parked.
             let received = {
                 let mut recv = core::pin::pin!(socket.recv_from(&mut buf));
                 use embassy_futures::select::{select, Either};

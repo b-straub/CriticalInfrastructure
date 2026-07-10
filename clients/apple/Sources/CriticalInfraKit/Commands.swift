@@ -53,11 +53,6 @@ public enum Role: String, CaseIterable, Sendable {
 }
 
 public enum AppConstants {
-    /// The PRF salt string. The actual WebAuthn PRF input is its SHA-256 (see
-    /// PasskeyAuthenticator.prfSalt) — identical to the web client's
-    /// `SHA-256("CriticalInfra_Supervisor_Salt_V1")`.
-    public static let prfSaltString = "CriticalInfra_Supervisor_Salt_V1"
-
     /// Default device port (matches `shared::terminology::SUPERVISOR_PORT`).
     public static let defaultPort: UInt16 = 8080
 }

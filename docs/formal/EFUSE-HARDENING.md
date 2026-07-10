@@ -13,17 +13,15 @@ ever shared between them:
 
 | Key | Home | Role |
 |-----|------|------|
-| **Supervisor identity** | **WebAuthn-PRF** passkey (web flavor) · **Token2 PIV ECCP256** slot 9c, or Mac Secure Enclave (native flavor) | signs commands, issues role certificates |
+| **Supervisor identity** | **Token2 PIV ECCP256** slot 9c, or Mac Secure Enclave (Touch ID) | signs commands, issues role certificates |
 | **Firmware secure-boot** | **Token2 PIV, RSA-3072** slot 9a | signs the Secure Boot v2 firmware image; eFuse stores only its public-key digest |
 | **Device identity + flash key** | **ESP32 eFuse** (HMAC-KDF root + XTS-AES) | per-device X25519/Ed25519 seeds and the flash-encryption key; hardware-only, never leaves the chip |
 
 On the reference board a single **Token2 PIN+ (release 3.3)** holds two of these
-domains on its **PIV** applet — both validated end-to-end: the **native-flavor
-supervisor** (ECCP256, slot 9c) and the **secure-boot signer** (RSA-3072, slot 9a).
-The *web* flavor's supervisor is a WebAuthn-PRF passkey instead; the device-identity
-and secure-boot domains are identical for both flavors. In production you would
-split the rarely-used release-signing key onto its own token; for this demo one
-device is fine.
+domains on its **PIV** applet — both validated end-to-end: the **supervisor**
+(ECCP256, slot 9c) and the **secure-boot signer** (RSA-3072, slot 9a). In
+production you would split the rarely-used release-signing key onto its own
+token; for this demo one device is fine.
 
 ### Secure-boot signing — RSA-3072 on the Token2 PIV (validated)
 

@@ -29,7 +29,7 @@ public enum EnvelopeError: Error, Equatable, CustomStringConvertible {
 }
 
 /// The command-envelope crypto, byte-compatible with the firmware (`crypto.rs`,
-/// `protocol.rs`) and the web client (`supervisor-web/src/crypto.rs`):
+/// `protocol.rs`):
 ///
 ///  request  = `eph_pub;iv;ciphertext+tag` (hex), inner `ts;cmd;ed25519_sig`
 ///  response = `eph_pub;iv;ciphertext+tag` (hex), inner `ts;message;ed25519_sig`

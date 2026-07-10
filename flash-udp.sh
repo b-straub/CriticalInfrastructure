@@ -1,11 +1,9 @@
 #!/bin/bash
-# Flash the UDP-transport ROM flavor (for native clients, e.g. the SwiftUI app in
-# clients/apple). Mirrors flash.sh but selects `udp-transport` instead of the
-# default `http-transport`. The two flavors are mutually exclusive.
+# Flash the firmware for native clients (e.g. the SwiftUI app in clients/apple),
+# building the `udp-transport` feature.
 #
-# NOTE: the UDP flavor authenticates clients with P-256, so the supervisor arg is a
-# P-256 identity, NOT the 64-hex Ed25519 key the HTTP/flash.sh flavor uses. The 3rd
-# arg accepts ANY of:
+# NOTE: the device authenticates clients with P-256, so the supervisor arg is a
+# P-256 identity. The 3rd arg accepts ANY of:
 #   - a 66-hex COMPRESSED P-256 key (the app's "Copy" button),
 #   - a PEM public-key FILE path, or
 #   - inline PEM text (as keyroost / `openssl ... -pubout` emit)

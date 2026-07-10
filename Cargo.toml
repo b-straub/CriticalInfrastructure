@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "shared",
-    "supervisor-web",
     "target-esp32s3",
 ]
 resolver = "2"
@@ -11,8 +10,3 @@ opt-level = 2
 
 [profile.release]
 opt-level = 2
-
-# The WASM webapp optimizes for size (smaller download) without affecting the
-# firmware's release build. Trunk additionally runs wasm-opt on release builds.
-[profile.release.package.supervisor-web]
-opt-level = "s"

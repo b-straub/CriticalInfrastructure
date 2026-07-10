@@ -1,11 +1,16 @@
-# UDP Transport — Native-Flavor ROM
+# UDP Transport — Native Client
 
-Status: **implemented.** This document specifies a second firmware flavor that
-carries the *existing* command envelope over raw UDP instead of HTTP/TCP, so a
-platform-native client (e.g. a SwiftUI app) can talk to the device without the
-browser's protocol sandbox. The firmware flavor lives behind the `udp-transport`
-cargo feature (flash with `./flash-udp.sh`); the reference native client is in
-[`clients/apple`](../../clients/apple).
+Status: **implemented — now the only transport.** This document records the move
+from the original browser/HTTP flavor to a raw-UDP command transport for a
+platform-native client (the SwiftUI app), and specifies that transport. The
+device carries the *existing* command envelope over UDP; the firmware lives
+behind the `udp-transport` cargo feature (flash with `./flash-udp.sh`); the
+reference client is in [`clients/apple`](../../clients/apple).
+
+> **The browser/WebAuthn HTTP flavor has been removed.** References below to the
+> "HTTP flavor", the Leptos/WASM dashboard, or WebAuthn-PRF passkeys are historical
+> — they describe the *before* state this migration replaced. The device now speaks
+> UDP only, and clients authenticate with **P-256** (Secure Enclave / PIV).
 
 ## 0. Why this exists
 
@@ -22,14 +27,12 @@ CORS / Private-Network-Access preflight. UDP supplies the boundary for free
 (one datagram = one message) and needs no CORS. So the UDP flavor is mostly
 **subtraction**.
 
-Two ROM flavors, built from the same crates:
+The migration replaced one transport with another (same crates, same envelope):
 
 | Flavor | Transport | Client | Purpose |
 | --- | --- | --- | --- |
-| `http` (today) | HTTP/1.1 · `:8080/tcp` | browser dashboard (Leptos/WASM) | cross-platform, zero-install |
-| `udp` (this doc) | raw UDP · `:8080/udp` | native app (SwiftUI, …) | lightweight, hardware-crypto client |
-
-They are flashed separately and do not run at once, so they can share a port.
+| `http` (removed) | HTTP/1.1 · `:8080/tcp` | browser dashboard (Leptos/WASM) | cross-platform, zero-install |
+| `udp` (current) | raw UDP · `:8080/udp` | native app (SwiftUI, …) | lightweight, hardware-crypto client |
 
 ## 1. Unchanged: the crypto envelope (single source of truth)
 
@@ -223,12 +226,12 @@ sensor read, LED policy — is untouched.
 
 ## 5. Client identity — P-256 in the Secure Enclave (implemented)
 
-The two flavors authenticate clients with different curves, by design:
+Clients authenticate with P-256 (the removed HTTP flavor used Ed25519 WebAuthn
+passkeys — see the status note at the top):
 
-| Flavor | Client key | Where it lives | Firmware verifies |
-| --- | --- | --- | --- |
-| HTTP / web | Ed25519 | WebAuthn passkey PRF (browser) | Ed25519 |
-| **UDP (native)** | **P-256 ECDSA** | **Mac Secure Enclave** (or a PIV hardware key) | **P-256** (`clientauth`) |
+| Client key | Where it lives | Firmware verifies |
+| --- | --- | --- |
+| **P-256 ECDSA** | **Mac Secure Enclave** (or a PIV hardware key) | **P-256** (`clientauth`) |
 
 Why P-256 for UDP: the point of the native flavor is a hardware-held key with no
 domain/passkey ceremony. The Secure Enclave — and domainless hardware security

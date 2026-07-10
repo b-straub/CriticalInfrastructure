@@ -9,7 +9,7 @@ builtins: diffie-hellman, symmetric-encryption, hashing, signing, natural-number
   not on timestamp secrecy.
 
   Response authenticity is provided by an ESP SIGNATURE (Ed25519) over the
-  response, verified by the WebApp with the ESP's public signing key. Response
+  response, verified by the Client with the ESP's public signing key. Response
   confidentiality uses an ephemeral x ephemeral DH key => perfect forward
   secrecy (neither long-term key derives a past response key).
 */
@@ -26,21 +26,21 @@ rule Init_ESP32:
         Out('g'^~rom_priv), Out(pk(~esp_sig))
     ]
 
-rule Init_WebApp_Role:
+rule Init_Client_Role:
     [ Fr(~role_priv) ]
     --[ Secret_Role(~role_priv) ]->
     [
-        !WebApp_Role_Priv(~role_priv),
-        !WebApp_Role_Pub(pk(~role_priv)),
+        !Client_Role_Priv(~role_priv),
+        !Client_Role_Pub(pk(~role_priv)),
         Out(pk(~role_priv))
     ]
 
 rule Provision_ESP32:
-    [ !ESP32_ROM_Priv(~rom_priv), !WebApp_Role_Pub(role_pub) ]
+    [ !ESP32_ROM_Priv(~rom_priv), !Client_Role_Pub(role_pub) ]
     -->
     [ !ESP32_Has_Role_Pub(role_pub) ]
 
-rule WebApp_Send_Command:
+rule Client_Send_Command:
     let
         payload = <'command', ts>
         sig = sign(payload, ~role_priv)
@@ -50,7 +50,7 @@ rule WebApp_Send_Command:
         ciphertext = senc(<payload, sig>, aes_key)
     in
     [
-        !WebApp_Role_Priv(~role_priv),
+        !Client_Role_Priv(~role_priv),
         !ESP32_ROM_Pub(esp32_rom_pub),
         !ESP32_Sig_Pub(esp_sig_pub),
         In(ts),
@@ -62,7 +62,7 @@ rule WebApp_Send_Command:
     ]->
     [
         Out(<eph_pub, ciphertext>),
-        State_WebApp_Wait(~eph_priv, ts, esp_sig_pub)
+        State_Client_Wait(~eph_priv, ts, esp_sig_pub)
     ]
 
 rule ESP32_Recv_Command:
@@ -98,14 +98,14 @@ rule ESP32_Recv_Command:
         Out(<resp_eph_pub, resp_ciphertext>)
     ]
 
-rule WebApp_Recv_Response:
+rule Client_Recv_Response:
     let
         resp_aes_key = h(resp_eph_pub^~eph_priv)
         resp_payload = <'response', ts>
         resp_ciphertext = senc(<resp_payload, resp_sig>, resp_aes_key)
     in
     [
-        State_WebApp_Wait(~eph_priv, ts, esp_sig_pub),
+        State_Client_Wait(~eph_priv, ts, esp_sig_pub),
         In(<resp_eph_pub, resp_ciphertext>)
     ]
     --[
@@ -157,7 +157,7 @@ lemma role_key_secrecy:
 lemma esp_sig_key_secrecy:
     "All k #i. Secret_ESPSig(k) @i ==> not (Ex #j. K(k) @j)"
 
-// The WebApp accepts a response only if the ESP actually produced it: the
+// The Client accepts a response only if the ESP actually produced it: the
 // response carries the ESP's signature, unforgeable without the ESP signing key.
 lemma response_authentication:
     "All ts #k. Recv_Response(<'response', ts>) @k

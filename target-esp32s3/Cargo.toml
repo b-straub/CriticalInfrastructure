@@ -4,14 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-# Transport flavor -- mutually exclusive, enforced by a compile_error! in main.
-# `http-transport` (default) keeps the browser-reachable HTTP/1.1 endpoint;
-# `udp-transport` swaps it for a raw UDP datagram loop for native clients.
-# See docs/formal/UDP-TRANSPORT.md.
-default = ["http-transport"]
-http-transport = []
-# The UDP flavor authenticates clients with P-256 ECDSA (Secure Enclave / hardware
-# security keys), so it pulls in the p256 crate; the HTTP flavor stays Ed25519-only.
+# The device speaks a raw UDP datagram protocol to native clients (the macOS app /
+# PIV hardware key), authenticating them with P-256 ECDSA (Secure Enclave / hardware
+# security keys) — so it pulls in the p256 crate. See docs/formal/UDP-TRANSPORT.md.
+default = ["udp-transport"]
 udp-transport = ["dep:p256"]
 
 # Derive the device identity from a read-protected eFuse HMAC key via the

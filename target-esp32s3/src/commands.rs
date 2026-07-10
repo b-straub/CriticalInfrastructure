@@ -94,9 +94,7 @@ pub fn dispatch(
         if role == ROLE_SUPERVISOR {
             // The revoke target lives inside the decrypted, signed command
             // (e.g. "REVOKE_ROLE Operator") -- parse it here, not from an outer
-            // transport field. The old `parts.next()` read a 4th `;`-field of the
-            // raw HTTP body that the client never populated, so revoke silently
-            // no-op'd; UDP has no such field at all.
+            // transport field.
             let mut cmd_parts = cmd.split_whitespace();
             cmd_parts.next(); // skip REVOKE_ROLE
             if let Some(target_role) = cmd_parts.next() {

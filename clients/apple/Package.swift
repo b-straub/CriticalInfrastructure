@@ -1,8 +1,8 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// The security-critical core (crypto envelope, UDP transport, passkey-PRF key
-// derivation, SwiftUI views) lives in one library so `swift build` / `swift test`
+// The security-critical core (crypto envelope, UDP transport, Secure Enclave / PIV
+// signing, SwiftUI views) lives in one library so `swift build` / `swift test`
 // verify it on macOS. The runnable app wraps this library in an Xcode target that
 // supplies `@main`, Info.plist, and the entitlements (see AppSources/ + README).
 let package = Package(

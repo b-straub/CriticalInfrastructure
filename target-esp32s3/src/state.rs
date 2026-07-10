@@ -11,8 +11,7 @@ use smart_leds::{colors, RGB8};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RoleEntry {
     pub name: heapless::String<16>,
-    /// Client public key: 32 bytes (Ed25519, HTTP flavor) or 33 bytes (P-256
-    /// compressed, UDP flavor). A `Vec` so one struct serves both flavors.
+    /// Client public key: 33 bytes (P-256 compressed). A `Vec` for wire flexibility.
     pub pubkey: heapless::Vec<u8, 33>,
     pub cert_sig: heapless::Vec<u8, 64>,
 }
