@@ -23,6 +23,8 @@ use ws2812_spi::Ws2812;
 use static_cell::StaticCell;
 use shared::terminology::*;
 
+#[cfg(feature = "ota-net")]
+mod bootsig;
 mod clientauth;
 mod commands;
 mod crypto;

@@ -25,11 +25,13 @@ efuse-hmac-identity = []
 # See docs/formal/OTA.md step 4.2. Never enable in a production image.
 ota-selftest = []
 
-# Network OTA: run a TCP server (:8081) that receives a length-prefixed signed image
-# and installs it into the inactive slot. See docs/formal/OTA.md step 4.3. The port is
-# currently unauthenticated (Secure Boot is the integrity backstop) — gating it via the
-# supervisor channel is a follow-up.
-ota-net = []
+# Network OTA: run a TCP server (:8081) that receives a length-prefixed signed image and
+# installs it into the inactive slot. See docs/formal/OTA.md step 4.3. The image's own Secure
+# Boot v2 (RSA-3072-PSS) signature is verified at receive, before the slot is activated, so an
+# unsigned/garbage push is never booted (no reboot churn); anti-rollback rejects downgrades.
+# Pulls `rsa` (and its sha2 0.10) — a second trait generation the crate otherwise avoids, but
+# there is ~1 MB free per slot and verify-before-activate is worth it.
+ota-net = ["dep:rsa"]
 
 [dependencies]
 shared = { path = "../shared" }
@@ -37,6 +39,10 @@ ed25519-dalek = { version = "2.1.1", default-features = false }
 # P-256 ECDSA verification for the UDP flavor's client auth. Optional: only the
 # udp-transport build enables it (see [features]). no_std, verify-only.
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"], optional = true }
+# RSA-3072-PSS verification of an incoming OTA image's Secure Boot v2 signature, at receive
+# time. Optional: only the ota-net build enables it. no_std + alloc, verify-only (no RNG).
+# Brings its own sha2 0.10 / digest generation; accepted for verify-before-activate (see [features]).
+rsa = { version = "0.9", default-features = false, features = ["sha2"], optional = true }
 postcard = "1.0"
 
 esp-backtrace = { version = "0.15.0", features = ["esp32s3", "panic-handler", "println"] }

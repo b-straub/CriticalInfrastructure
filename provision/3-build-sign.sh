@@ -58,9 +58,18 @@ else
   note "1-2/4 bootloader skipped (--skip-bootloader)"
 fi
 
+# Trusted SECURE_BOOT_DIGEST(s) for the ota-net receive-time signature check: SHA-256 of each
+# enrolled key's public section (the same value burned in eFuse). Baked into the app so it can
+# verify an incoming image's Secure Boot signature before activating a slot.
+DIGESTS="$(xxd -p "$(key_digest "$PRIMARY")" 2>/dev/null | tr -d '\n')"
+if [ -n "${BACKUP:-}" ] && [ -f "$(key_digest "$BACKUP")" ]; then
+  DIGESTS="$DIGESTS,$(xxd -p "$(key_digest "$BACKUP")" | tr -d '\n')"
+fi
+[ -n "$DIGESTS" ] || die "no key digest for '$PRIMARY' (provision/1-enroll-key.sh --name $PRIMARY)"
+
 note "3/4 build the esp-hal app (features: $FEATURES)"
 ( cd "$FW" && source "$HOME/export-esp.sh" >/dev/null 2>&1 \
-  && WIFI_SSID="$SSID" WIFI_PASS="$PASS" SUPERVISOR_PUBKEY="$SUPHEX" \
+  && WIFI_SSID="$SSID" WIFI_PASS="$PASS" SUPERVISOR_PUBKEY="$SUPHEX" SECURE_BOOT_DIGESTS="$DIGESTS" \
        cargo build --release --no-default-features --features "$FEATURES" )
 [ -f "$ELF" ] || die "app ELF missing: $ELF"
 esptool --chip esp32s3 elf2image "$ELF" --output "$OUTDIR/app.bin"

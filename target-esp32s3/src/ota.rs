@@ -308,12 +308,17 @@ pub async fn server_task(stack: embassy_net::Stack<'static>) {
 async fn receive_and_install(
     sock: &mut embassy_net::tcp::TcpSocket<'_>,
 ) -> Result<u32, &'static str> {
+    use sha2::{Digest, Sha256};
+
     let mut lenb = [0u8; 4];
     read_exact(sock, &mut lenb).await?;
     let total = u32::from_le_bytes(lenb);
-    if total == 0 || total > SLOT_SIZE {
+    // Signed images are sector-aligned with a trailing signature-block sector; require that
+    // shape so the last sector is exactly the block and every body sector is full.
+    if total <= SECTOR as u32 || total > SLOT_SIZE || total % SECTOR as u32 != 0 {
         return Err("bad image length");
     }
+    let body_len = total - SECTOR as u32; // everything before the signature-block sector
     let min = core::cmp::max(crate::storage::load_min_version(), own_secure_version());
 
     let target = 1 - booted_slot();
@@ -328,6 +333,7 @@ async fn receive_and_install(
         min
     );
 
+    let mut hasher = Sha256::new(); // digest of the body (all sectors but the last)
     let mut sector = AlignedSector([0u8; SECTOR]);
     let mut filled = 0usize;
     let mut written = 0u32;
@@ -348,19 +354,22 @@ async fn receive_and_install(
             if written == 0 {
                 version = check_app_desc(&sector.0, min)?; // reject before the first flash write
             }
+            if written < body_len {
+                hasher.update(&sector.0); // body sector -> image digest
+            } else {
+                // The final sector is the Secure Boot v2 signature block. Verify the image's own
+                // RSA-3072 signature (over the body digest) now — while the block is still
+                // plaintext in `sector` and BEFORE the slot is activated. `put_sector` may
+                // encrypt in place, so we must check first. A bad/unsigned push never boots.
+                let digest = hasher.clone().finalize();
+                let mut body_digest = [0u8; 32];
+                body_digest.copy_from_slice(&digest);
+                crate::bootsig::verify(&body_digest, &sector.0)?;
+            }
             put_sector(base + written, &mut sector, encrypted);
             written += SECTOR as u32;
             filled = 0;
         }
-    }
-    if filled > 0 {
-        if written == 0 {
-            version = check_app_desc(&sector.0, min)?;
-        }
-        for b in sector.0[filled..].iter_mut() {
-            *b = 0xFF;
-        }
-        put_sector(base + written, &mut sector, encrypted);
     }
 
     commit_pending(target);
