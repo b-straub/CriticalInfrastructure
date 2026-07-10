@@ -26,6 +26,7 @@ while [ $# -gt 0 ]; do case "$1" in
   *) die "unknown arg: $1 (see --help)";;
 esac; done
 require_port "$PORT"; need esptool "brew install esptool"
+load_creds # fill SSID/PASS/SUP from the Keychain if not given (provision/store-creds.sh)
 
 # 1. preflight — the A/B layout needs >= 8 MB flash (ends at ~0x410000)
 note "1/4 preflight: flash size (need >= 8 MB)"

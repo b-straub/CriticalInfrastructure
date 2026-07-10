@@ -22,7 +22,8 @@ while [ $# -gt 0 ]; do case "$1" in
   -h|--help) show_help "$0"; exit 0;;
   *) die "unknown arg: $1 (see --help)";;
 esac; done
-[ -n "$SSID" ] && [ -n "$PASS" ] && [ -n "$SUP" ] || die "--ssid, --pass, --supervisor required"
+load_creds # fill SSID/PASS/SUP from the Keychain if not given (provision/store-creds.sh)
+[ -n "$SSID" ] && [ -n "$PASS" ] && [ -n "$SUP" ] || die "--ssid/--pass/--supervisor required (or store once: provision/store-creds.sh)"
 require_port "$PORT"; need esptool "brew install esptool"
 SUPHEX="$(supervisor_to_hex "$SUP")"
 IFS=',' read -r PRIMARY BACKUP _ <<< "$KEYS"

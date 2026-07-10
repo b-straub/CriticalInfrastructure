@@ -22,7 +22,8 @@ while [ $# -gt 0 ]; do case "$1" in
   *) die "unknown arg: $1 (see --help)";;
 esac; done
 require_port "$PORT"; need esptool "brew install esptool"
-[ -n "$SSID" ] && [ -n "$PASS" ] && [ -n "$SUP" ] || die "--ssid --pass --supervisor required"
+load_creds # fill SSID/PASS/SUP from the Keychain if not given (provision/store-creds.sh)
+[ -n "$SSID" ] && [ -n "$PASS" ] && [ -n "$SUP" ] || die "--ssid/--pass/--supervisor required (or store once: provision/store-creds.sh)"
 
 note "1/4 build + sign the ota-selftest app (bootloader unchanged)"
 "$REPO/provision/3-build-sign.sh" --ssid "$SSID" --pass "$PASS" --supervisor "$SUP" \
