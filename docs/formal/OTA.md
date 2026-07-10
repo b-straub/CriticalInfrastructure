@@ -154,6 +154,19 @@ provision/ota-push.sh --host <device-ip> --image secure-boot/out/app-signed.bin
 > bytes over TCP; device installed into `ota_1`, activated, rebooted to
 > `App(Ota1) @ 0x230000`, and stayed there (confirmed `Valid`). No USB cable.
 
+**One pass (day-to-day update).** Once the board is provisioned and running `ota-net`,
+`provision/ota-update.sh` does build → sign → deliver in a single command. Wi-Fi creds,
+supervisor pubkey and the device IP come from the Keychain (`provision/store-creds.sh`,
+incl. `--host <ip>`), so there are no args and the Token2 PIN is entered once:
+
+```sh
+provision/store-creds.sh --host 192.168.178.133   # once
+provision/ota-update.sh                            # every update: build+sign+push, one pass
+```
+It keeps the current bootloader/partition layout (`--skip-bootloader`); on an encrypted
+board the firmware encrypt-writes the image. Confirm it landed by the LCD build tag (line
+2, `HHMM`) or the serial `Firmware <hash> built …` line changing.
+
 **Security (deferred, tracked):** `:8081` is unauthenticated. Secure Boot is the
 integrity backstop — a tampered/garbage image won't boot and rolls back — but a LAN
 attacker could force reboots or push an older *validly signed* image. Next: gate the

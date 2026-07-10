@@ -55,15 +55,17 @@ key_digest() { printf '%s' "$SB/$1_digest.bin"; }
 key_driver() { local f="$SB/hsm-$1.driver"; [ -f "$f" ] && cat "$f" || true; }
 
 # --- provisioning creds in the macOS Keychain (store once, don't retype each build) ---
-KC_WIFI="${KC_WIFI:-CriticalInfra-WiFi}"      # account = SSID, password = Wi-Fi password
-KC_SUP="${KC_SUP:-CriticalInfra-Supervisor}"  # password = 66-hex P-256 supervisor pubkey
+KC_WIFI="${KC_WIFI:-CriticalInfra-WiFi}"       # account = SSID, password = Wi-Fi password
+KC_SUP="${KC_SUP:-CriticalInfra-Supervisor}"   # password = 66-hex P-256 supervisor pubkey
+KC_HOST="${KC_HOST:-CriticalInfra-DeviceHost}" # password = device IP (for network OTA)
 
-# Fill empty SSID / PASS / SUP from the Keychain. Command-line values always win; a
-# missing Keychain entry just leaves the value empty (the caller's :? check then fires).
-# Only the Wi-Fi password is secret; SSID + supervisor pubkey are kept alongside it for
-# convenience. Set them with provision/store-creds.sh.
+# Fill empty SSID / PASS / SUP / HOST from the Keychain. Command-line values always win; a
+# missing Keychain entry just leaves the value empty (the caller's check then fires).
+# Only the Wi-Fi password is secret; SSID, supervisor pubkey, device IP are kept alongside
+# it for convenience. Set them with provision/store-creds.sh.
 load_creds() {
     [ -n "${PASS:-}" ] || PASS="$(security find-generic-password -s "$KC_WIFI" -w 2>/dev/null || true)"
     [ -n "${SSID:-}" ] || SSID="$(security find-generic-password -s "$KC_WIFI" 2>/dev/null | awk -F'"' '/"acct"<blob>/{print $4}')"
     [ -n "${SUP:-}" ]  || SUP="$(security find-generic-password -s "$KC_SUP" -w 2>/dev/null || true)"
+    [ -n "${HOST:-}" ] || HOST="$(security find-generic-password -s "$KC_HOST" -w 2>/dev/null || true)"
 }
