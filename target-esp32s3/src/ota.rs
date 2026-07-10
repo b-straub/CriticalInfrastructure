@@ -261,6 +261,17 @@ pub fn maybe_self_copy_test() {
 // a tampered/garbage image won't boot and rolls back — but gating the trigger through the
 // supervisor channel + anti-rollback (SECURE_VERSION) is the next hardening step.
 
+/// Best-effort full write of a short message to the OTA socket (for the in-band verdict).
+#[cfg(feature = "ota-net")]
+async fn sock_write_all(sock: &mut embassy_net::tcp::TcpSocket<'_>, mut data: &[u8]) {
+    while !data.is_empty() {
+        match sock.write(data).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => data = &data[n..],
+        }
+    }
+}
+
 /// TCP OTA server: accept on :8081, receive a length-prefixed signed image
 /// (`[u32 LE length][image bytes]`), stream it into the inactive slot (encrypted under FE),
 /// activate it, and reset. See docs/formal/OTA.md.
@@ -289,7 +300,14 @@ pub async fn server_task(stack: embassy_net::Stack<'static>) {
             }
             Err(e) => {
                 info!("OTA: transfer aborted: {}", e);
-                sock.abort();
+                // In-band verdict, so a client learns the outcome WITHOUT a serial console (a
+                // hardened device exposes none): reply "ERR <reason>\n" then close gracefully.
+                // An accepted push instead reboots — the client sees the connection drop, no ERR.
+                sock_write_all(&mut sock, b"ERR ").await;
+                sock_write_all(&mut sock, e.as_bytes()).await;
+                sock_write_all(&mut sock, b"\n").await;
+                let _ = sock.flush().await;
+                sock.close();
                 Timer::after(Duration::from_millis(50)).await;
             }
         }
