@@ -187,6 +187,19 @@ host against the real signed image and real burned digests. Residual: a raw TCP 
 is a generic availability concern, not OTA-specific. Multi-key images: the primary (first) block
 is checked, which matches the single-key `ota-update.sh` flow.
 
+**In-band verdict + attack test.** On a reject the server replies `ERR <reason>\n` over the TCP
+connection (an accept reboots, so the socket just drops) — so the outcome is observable without a
+serial console, which a fully hardened device won't expose. `provision/ota-attack-test.sh
+--build-base` signs a fresh higher-version base (so signature-path attacks clear the version gate)
+and fires seven crafted images, asserting each fails at its **intended** check.
+
+> ✅ **Verified on hardware** (device on the deployed `ota-net` build, `:8081`): 7/7 refused
+> in-band, **0 accepted, 0 reboots**, each at its intended check —
+> `version rollback rejected` · `not an app image` · `bad image length` · `image digest mismatch`
+> · `sig block magic` · `untrusted signing key` · **`PSS verify failed`** (the RSA-3072-PSS verify
+> firing on-device). Against the pre-hardening firmware every one instead rebooted (accept →
+> bootloader reject → rollback), which is the DoS this closes.
+
 ## Phase 5 — flash encryption (4.5, ✅ complete — Dev-encrypted, network-OTA verified, Release-sealed)
 
 **What's encrypted.** Flash encryption force-encrypts the bootloader, partition table,
