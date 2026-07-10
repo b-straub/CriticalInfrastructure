@@ -49,7 +49,7 @@ fi
 note "attack test -> $HOST:$TPORT  (base $(basename "$IMG"), verdict read in-band over TCP)"
 [ "$BUILD_BASE" = 1 ] || echo "    (no --build-base: signature-path attacks may be caught by the version gate — reported 'gate')"
 python3 - "$HOST" "$TPORT" "$IMG" <<'PY'
-import socket, struct, sys, time, os
+import socket, struct, sys, time, os, threading
 
 HOST, TPORT, IMG = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 base = open(IMG, 'rb').read()
@@ -89,25 +89,33 @@ def wait_ready(maxwait=40):
     return False
 
 def push_read(data):
-    # device's in-band reply: b"ERR <reason>\n" if refused, b"" if it dropped/rebooted
+    # device's in-band reply: b"ERR <reason>\n" if refused, b"" if it dropped/rebooted.
+    # Read CONCURRENTLY with sending: the device rejects early (often at the first sector) and
+    # sends ERR while we're still pushing the rest of the image — a blocking send-then-recv would
+    # race and miss it. So a background thread sends; the main thread reads the reply.
     try:
         s = socket.create_connection((HOST, TPORT), timeout=20)
-        s.sendall(struct.pack('<I', len(data)))
-        try: s.sendall(data)
-        except Exception: pass          # device may drop mid-send on an early reject
-        s.settimeout(20)
-        resp = b""
-        try:
-            while len(resp) < 128 and b"\n" not in resp:
-                chunk = s.recv(128)
-                if not chunk: break
-                resp += chunk
-        except Exception:
-            pass
-        s.close()
-        return resp
     except Exception:
         return b""
+    def sender():
+        try:
+            s.sendall(struct.pack('<I', len(data)))
+            s.sendall(data)
+        except Exception:
+            pass                        # device closes its read half on an early reject
+    threading.Thread(target=sender, daemon=True).start()
+    s.settimeout(25)
+    resp = b""
+    try:
+        while len(resp) < 128 and b"\n" not in resp:
+            chunk = s.recv(128)
+            if not chunk: break
+            resp += chunk
+    except Exception:
+        pass
+    try: s.close()
+    except Exception: pass
+    return resp
 
 if not wait_ready(15):
     sys.exit("device not reachable on :%d — is it up and on Wi-Fi?" % TPORT)
