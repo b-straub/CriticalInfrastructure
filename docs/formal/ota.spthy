@@ -1,0 +1,115 @@
+theory OtaDelivery
+begin
+
+builtins: signing, natural-numbers
+
+/*
+  OTA image delivery over a Dolev-Yao network (the :8081 receive path, `ota-net`).
+
+  The signer holds the Secure Boot v2 RSA key — abstracted here as an unforgeable
+  signature key (symbolic crypto: sign/verify are perfect). The trusted key is the
+  one whose SECURE_BOOT_DIGEST is baked into the device; in the model the device
+  simply knows pk(sk).
+
+  Each image carries a version — a public natural. As with the command timestamp
+  in dashboard.spthy, the attacker sees and may choose it: anti-rollback rests on
+  the device's monotonic floor, not on version secrecy. The version is inside the
+  signed content, so it cannot be changed without invalidating the signature
+  (mirrors secure_version living in the RSA-signed app descriptor).
+
+  The device verifies the signature against the trusted key and accepts only a
+  version strictly above its stored floor, then advances the floor (mirrors
+  bootsig::verify before commit_pending, plus storage::save_min_version).
+
+  Attacker (built-in Dolev-Yao): may inject, replay, reorder and tamper with any
+  network message; cannot forge the signer's signature without the key.
+*/
+
+// The signer (Secure Boot key holder). Set up once; publishes its public key.
+rule Init_Signer:
+    [ Fr(~sk) ]
+  --[ SecretSK(~sk), OnlyOnceSigner() ]->
+    [ !Signer_Sk(~sk), !Signer_Pk(pk(~sk)), Out(pk(~sk)) ]
+
+// The device trusts the signer's public key (persistent, read-only — kept out of the
+// mutable floor so the signature-source search doesn't loop) and starts with floor %1.
+rule Init_Device:
+    [ Fr(~dev), !Signer_Pk(pkS) ]
+  --[ OnlyOnceDevice() ]->
+    [ !Device_Trust(~dev, pkS), Device_Floor(~dev, %1) ]
+
+// The signer produces a signed image at a chosen (public) version.
+rule Sign_Image:
+    let sig = sign(<'img', ~body, ver>, ~sk) in
+    [ !Signer_Sk(~sk), Fr(~body), In(ver) ]
+  --[ Sign(~body, ver), IsNat(ver) ]->
+    [ Out(<~body, ver, sig>) ]
+
+// The device receives an image from the network, verifies the signature against
+// the trusted key, and (via the Antirollback restriction on Accept) installs it
+// only if its version strictly exceeds the floor — then advances the floor.
+rule Device_Recv:
+    [ !Device_Trust(~dev, pkS), Device_Floor(~dev, floor), In(<body, ver, sig>) ]
+  --[
+      Eq(verify(sig, <'img', body, ver>, pkS), true),
+      Accept(~dev, floor, ver),
+      Activate(~dev, body, ver),
+      ActivateVer(~dev, ver)
+    ]->
+    [ Device_Floor(~dev, ver) ]
+
+
+// --- RESTRICTIONS ---
+
+restriction Equality:
+    "All x y #i. Eq(x, y) @i ==> x = y"
+
+restriction OnlyOneSigner:
+    "All #i #j. OnlyOnceSigner() @i & OnlyOnceSigner() @j ==> #i = #j"
+
+restriction OnlyOneDevice:
+    "All #i #j. OnlyOnceDevice() @i & OnlyOnceDevice() @j ==> #i = #j"
+
+// Force version terms to the natural sort (base %1 or a successor), so ⊏ applies.
+restriction Versions_Are_Naturals:
+    "All v #i. IsNat(v) @i ==> (v = %1) | (Ex w. v = w %+ %1)"
+
+// Firmware anti-rollback guard: accept only if the version strictly exceeds the floor.
+restriction Antirollback:
+    "All dev floor ver #i. Accept(dev, floor, ver) @i ==> floor ⊏ ver"
+
+
+// --- LEMMAS ---
+
+// Activations on a device are strictly increasing in version over time. This is the
+// heart of anti-rollback, proven (not assumed) from the floor chain + the guard.
+lemma floor_monotonic [use_induction, reuse]:
+    "All dev v1 v2 #i #j.
+        ActivateVer(dev, v1) @i & ActivateVer(dev, v2) @j & #i < #j
+        ==> v1 ⊏ v2"
+
+// No downgrade: a device never activates a version strictly below one it already
+// activated earlier. (Follows from floor_monotonic.)
+lemma no_downgrade:
+    "not (Ex dev vhi vlo #i #j.
+        ActivateVer(dev, vhi) @i & ActivateVer(dev, vlo) @j
+        & #i < #j & vlo ⊏ vhi)"
+
+// Image authentication: whatever the device activates was signed by the signer at
+// that exact version. A tampered body or a version not signed at that value cannot
+// be activated (the signature binds body and version together).
+lemma image_authentication:
+    "All dev body ver #j. Activate(dev, body, ver) @j
+        ==> (Ex #i. Sign(body, ver) @i & #i < #j)"
+
+// The signing key never leaks to the attacker.
+lemma signing_key_secrecy [reuse]:
+    "All k #i. SecretSK(k) @i ==> not (Ex #j. K(k) @j)"
+
+// Sanity: a genuine, higher-version image does install (the guards aren't vacuous).
+lemma executability:
+    exists-trace
+    "Ex dev body ver #i #j.
+        Sign(body, ver) @i & Activate(dev, body, ver) @j & #i < #j"
+
+end

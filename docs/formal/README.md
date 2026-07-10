@@ -29,6 +29,30 @@ and is verifiable with [Tamarin Prover](https://tamarin-prover.com/).
   `Date.now()` in reality), so replay protection rests on the device clock, not
   on timestamp secrecy.
 
+- `ota.spthy` — Tamarin model for the **OTA image delivery protocol** (the
+  `ota-net` `:8081` receive path). It encodes the Secure Boot v2 signature
+  (abstracted as an unforgeable signature key — the same key both the bootloader
+  and the receive-time check trust), the `secure_version` carried inside the
+  signed image, and the device's monotonic anti-rollback floor. Against a
+  Dolev-Yao attacker who may inject, replay, reorder and tamper with any image
+  (but cannot forge the key) it proves:
+  - **image authentication** (`image_authentication`) — the device only ever
+    activates an image that the signer actually signed at that exact version; a
+    tampered body or a re-versioned image cannot be activated (the signature
+    binds body and version);
+  - **no downgrade** (`no_downgrade`, backed by `floor_monotonic`) — a device
+    never activates a version at or below one it already activated; *proven* from
+    the monotonic floor, not assumed — the OTA analogue of `no_replay`;
+  - **signing-key secrecy** (`signing_key_secrecy`) — the signing key never leaks;
+  - **executability** — a genuine higher-version image does install (the guards
+    are not vacuous).
+
+  Like the command timestamp, the image version is an attacker-known public
+  natural (`secure_version`, epoch in reality): anti-rollback rests on the
+  device's monotonic floor, not on version secrecy. This model matches the
+  hardened receive path (`bootsig::verify` before `commit_pending`, plus
+  `storage::save_min_version`) — see `OTA.md`.
+
 ## Running
 
 From the repository root, you can execute the verification script:
