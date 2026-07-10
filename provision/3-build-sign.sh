@@ -78,20 +78,35 @@ esptool --chip esp32s3 elf2image "$ELF" --output "$OUTDIR/app.bin"
 # signing, so the RSA signature covers it and the device can trust it. The esp_app_desc macro
 # hardcodes this field to 0, so we patch it here. Default = epoch seconds (monotonic per build).
 [ -n "$SECVER" ] || SECVER="$(date +%s)"
-note "3b/4 stamp secure_version = $SECVER into app.bin (anti-rollback)"
+note "3b/4 stamp secure_version = $SECVER into app.bin + recompute checksum/hash (anti-rollback)"
 python3 - "$OUTDIR/app.bin" "$SECVER" <<'PY'
-import sys, struct
+import sys, struct, hashlib
 path, ver = sys.argv[1], int(sys.argv[2])
 if not (0 < ver <= 0xFFFFFFFF):
     sys.exit(f"secure-version {ver} out of u32 range")
-data = bytearray(open(path, 'rb').read())
+d = bytearray(open(path, 'rb').read())
+if d[0] != 0xE9:
+    sys.exit("not an esp image (bad header magic 0xE9)")
 MAGIC, OFF = 0xABCD5432, 0x20            # app_desc magic @0x20, secure_version @0x24
-got = struct.unpack_from('<I', data, OFF)[0]
-if got != MAGIC:
-    sys.exit(f"app_desc magic {got:#010x} != {MAGIC:#010x} at {OFF:#x} — image layout changed")
-struct.pack_into('<I', data, OFF + 4, ver)
-open(path, 'wb').write(data)
-print(f"  secure_version = {ver} stamped at {OFF + 4:#x}")
+if struct.unpack_from('<I', d, OFF)[0] != MAGIC:
+    sys.exit(f"app_desc magic mismatch at {OFF:#x} — image layout changed")
+struct.pack_into('<I', d, OFF + 4, ver)
+# The stamp changed segment data, so the esp_image 1-byte checksum AND the appended SHA-256
+# (which elf2image already computed) are now stale — recompute both, else the image fails its
+# checksum at boot and the bootloader rolls back. Must run BEFORE signing so the RSA sig covers it.
+nseg, hash_appended = d[1], d[23]
+off, csum = 24, 0xEF
+for _ in range(nseg):
+    slen = struct.unpack_from('<I', d, off + 4)[0]
+    for b in d[off + 8: off + 8 + slen]:
+        csum ^= b
+    off += 8 + slen
+cpos = off + ((15 - (off % 16)) % 16)   # checksum byte: first offset >= end-of-segments with %16==15
+d[cpos] = csum
+if hash_appended:
+    d[cpos + 1: cpos + 33] = hashlib.sha256(d[:cpos + 1]).digest()
+open(path, 'wb').write(d)
+print(f"  secure_version = {ver} stamped at {OFF + 4:#x}; checksum 0x{csum:02x} + hash recomputed")
 PY
 
 note "4/4 sign the app -> $OUTDIR/app-signed.bin"
