@@ -16,13 +16,16 @@
 #                       (default: current epoch seconds — monotonic per build). The device
 #                       rejects any OTA whose version is not strictly above the one it runs.
 #   --skip-bootloader   sign only the app (bootloader already built/flashed)
+#   --build-only        build + stamp app.bin but DON'T sign it (leaves an unsigned, checksum-
+#                       valid image for a custom HSM sign — e.g. a single backup-key signature)
 source "$(dirname "$0")/lib.sh"
 
-SSID="" PASS="" SUP="" KEYS="token2" OUTDIR="$SB/out" FEATURES="udp-transport,efuse-hmac-identity" SKIPBL=0 SECVER=""
+SSID="" PASS="" SUP="" KEYS="token2" OUTDIR="$SB/out" FEATURES="udp-transport,efuse-hmac-identity" SKIPBL=0 SECVER="" BUILDONLY=0
 while [ $# -gt 0 ]; do case "$1" in
   --ssid) SSID="$2"; shift 2;; --pass) PASS="$2"; shift 2;; --supervisor) SUP="$2"; shift 2;;
   --keys) KEYS="$2"; shift 2;; --outdir) OUTDIR="$2"; shift 2;; --features) FEATURES="$2"; shift 2;;
   --secure-version) SECVER="$2"; shift 2;;
+  --build-only) BUILDONLY=1; shift;;
   --skip-bootloader) SKIPBL=1; shift;; -h|--help) show_help "$0"; exit 0;;
   *) die "unknown arg: $1 (see --help)";;
 esac; done
@@ -108,6 +111,12 @@ if hash_appended:
 open(path, 'wb').write(d)
 print(f"  secure_version = {ver} stamped at {OFF + 4:#x}; checksum 0x{csum:02x} + hash recomputed")
 PY
+
+if [ "$BUILDONLY" = 1 ]; then
+  echo "OK — built (unsigned) $OUTDIR/app.bin  (SECURE_BOOT_DIGESTS baked: $DIGESTS)"
+  echo "     --build-only: skipped signing. Sign it yourself (e.g. a single-key or driver-specific HSM sign)."
+  exit 0
+fi
 
 note "4/4 sign the app -> $OUTDIR/app-signed.bin"
 sign "$OUTDIR/app.bin" "$OUTDIR/app-signed.bin"
