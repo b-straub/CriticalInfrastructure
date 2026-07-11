@@ -17,17 +17,18 @@
 #   provision/ota-thetis-test.sh                 # host from Keychain
 #   provision/ota-thetis-test.sh --host <ip>
 #
-#   --host <ip>   device IP           (default: Keychain, provision/store-creds.sh)
-#   --port <n>    device OTA TCP port (default: 8081)
-#   --keys <a,b>  digests to BAKE (device stays trusting these); signing is always Thetis-only
-#                 (default: token2,thetis)
-#   --keep        keep the temp build dir (for inspection)
+#   --host <ip>    device IP           (default: Keychain, provision/store-creds.sh)
+#   --port <n>     device OTA TCP port (default: 8081)
+#   --keys <a,b>   digests to BAKE (device stays trusting these); signing is always Thetis-only
+#                  (default: token2,thetis)
+#   --driver <d>   OpenSC driver for the Thetis card (default: the recorded one, else PIV-II)
+#   --keep         keep the temp build dir (for inspection)
 source "$(dirname "$0")/lib.sh"
 
-HOST="" TPORT=8081 BAKE_KEYS="token2,thetis" KEEP=0
+HOST="" TPORT=8081 BAKE_KEYS="token2,thetis" DRIVER="" KEEP=0
 while [ $# -gt 0 ]; do case "$1" in
   --host) HOST="$2"; shift 2;; --port) TPORT="$2"; shift 2;;
-  --keys) BAKE_KEYS="$2"; shift 2;; --keep) KEEP=1; shift;;
+  --keys) BAKE_KEYS="$2"; shift 2;; --driver) DRIVER="$2"; shift 2;; --keep) KEEP=1; shift;;
   -h|--help) show_help "$0"; exit 0;;
   *) die "unknown arg: $1 (see --help)";;
 esac; done
@@ -35,8 +36,12 @@ load_creds
 [ -n "$HOST" ] || die "no device IP — pass --host <ip> or store it (provision/store-creds.sh --host <ip>)"
 
 # Thetis must be enrolled (provision/1-enroll-key.sh --name thetis --driver PIV-II).
-THETIS_INI="$(key_ini thetis)"; THETIS_PUB="$(key_pub thetis)"; THETIS_DRV="$(key_driver thetis)"
+THETIS_INI="$(key_ini thetis)"; THETIS_PUB="$(key_pub thetis)"
 [ -f "$THETIS_INI" ] && [ -f "$THETIS_PUB" ] || die "thetis not enrolled — run: provision/1-enroll-key.sh --name thetis --driver PIV-II"
+# The Thetis card needs OpenSC's PIV-II driver. Prefer an explicit --driver, then the recorded
+# one, then default to PIV-II (matches sign-secure-boot.sh) — never run with an empty driver,
+# which fails as an opaque "no slot" HSM error.
+THETIS_DRV="${DRIVER:-$(key_driver thetis)}"; THETIS_DRV="${THETIS_DRV:-PIV-II}"
 ES="$(espsecure_bin)"
 
 OUT="$(mktemp -d)"; [ "$KEEP" = 1 ] || trap 'rm -rf "$OUT"' EXIT
