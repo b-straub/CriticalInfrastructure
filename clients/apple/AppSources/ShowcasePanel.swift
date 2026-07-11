@@ -38,9 +38,9 @@ private struct MacShowcase: View {
                 ContentUnavailableView {
                     Label("Set the repo path", systemImage: "folder.badge.questionmark")
                 } description: {
-                    Text("Open Settings → Provisioning and choose your CriticalInfrastructure checkout so the showcase can find provision/*.sh.")
+                    Text("Choose your CriticalInfrastructure checkout so the showcase can find provision/*.sh.")
                 } actions: {
-                    Button("Open Settings") { model.showConfig = true }
+                    Button("Choose repo folder…") { chooseRepo() }
                         .buttonStyle(.borderedProminent)
                 }
             } else {
@@ -57,6 +57,18 @@ private struct MacShowcase: View {
 
     private var portArg: String? {
         selectedPort == ShowcaseStepCard.autoPort ? nil : selectedPort
+    }
+
+    private func chooseRepo() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Select repo"
+        if panel.runModal() == .OK, let url = panel.url {
+            model.config.repoPath = url.path
+            model.config.save()
+        }
     }
 
     private var portPicker: some View {

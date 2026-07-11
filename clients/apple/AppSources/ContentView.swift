@@ -24,6 +24,7 @@ struct ContentView: View {
                     #if os(macOS)
                     Button {
                         model.showShowcase.toggle()
+                        if model.showShowcase { model.showConfig = false }
                     } label: {
                         Image(systemName: "wrench.and.screwdriver")
                     }
@@ -31,6 +32,7 @@ struct ContentView: View {
                     #endif
                     Button {
                         model.showConfig.toggle()
+                        if model.showConfig { model.showShowcase = false }
                     } label: {
                         Image(systemName: "gearshape")
                     }
