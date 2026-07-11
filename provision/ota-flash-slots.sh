@@ -12,12 +12,12 @@
 #   --port <dev>        spare board in download mode (required)
 #   --ssid/--pass       Wi-Fi creds baked into the app (needed unless --skip-build)
 #   --supervisor <k>    P-256 supervisor pubkey: 66-hex, PEM file, or inline PEM
-#   --keys <a,b>        signing key(s), first = primary  (default: token2)
+#   --keys <a,b>        signing key(s), first = primary  (default: mainToken)
 #   --skip-build        reuse an already-built secure-boot/out/ (must be post-partitions.csv)
 #   --indir <dir>       signed chain location          (default: secure-boot/out)
 source "$(dirname "$0")/lib.sh"
 
-PORT="" SSID="" PASS="" SUP="" KEYS="token2" INDIR="$SB/out" SKIP_BUILD=0
+PORT="" SSID="" PASS="" SUP="" KEYS="mainToken" INDIR="$SB/out" SKIP_BUILD=0
 while [ $# -gt 0 ]; do case "$1" in
   --port) PORT="$2"; shift 2;; --ssid) SSID="$2"; shift 2;; --pass) PASS="$2"; shift 2;;
   --supervisor) SUP="$2"; shift 2;; --keys) KEYS="$2"; shift 2;;

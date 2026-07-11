@@ -17,7 +17,7 @@ import Foundation
 public enum RunMode: Sendable, Equatable {
     /// Safe to run headless: the app spawns it via `Process`, streams output, reads the exit code.
     case inline
-    /// Has an interactive gate (Token2 PIN, `espefuse` BURN confirm, backup-token `read -p`) that
+    /// Has an interactive gate (token PIN, `espefuse` BURN confirm, backup-token `read -p`) that
     /// cannot be driven over a pipe — the app launches it in a real terminal instead.
     case terminal
     /// No script at all (e.g. keyroost's on-card key generation is a GUI tool) — instructions only.
@@ -34,7 +34,7 @@ public enum Verdict: Sendable, Equatable {
 
 /// A single argument of a step, resolved at run time against the connection config + a port pick.
 public enum ArgSpec: Sendable, Equatable {
-    /// A fixed flag or token, e.g. `--yes-burn`, `--keys`, `token2`.
+    /// A fixed flag or token, e.g. `--yes-burn`, `--keys`, `mainToken`.
     case literal(String)
     /// `--host <device-ip>` — from `DeviceConfig.host` (scripts fall back to the Keychain if empty).
     case host
@@ -53,7 +53,7 @@ public struct ShowcaseStep: Identifiable, Sendable {
     public let script: String?
     public let args: [ArgSpec]
     public let mode: RunMode
-    /// Extra note surfaced for `.terminal` steps (e.g. "enter the Token2 PIN when prompted").
+    /// Extra note surfaced for `.terminal` steps (e.g. "enter the token PIN when prompted").
     public let terminalHint: String?
     /// Maps a process exit status to a `Verdict` (only meaningful for `.inline` steps).
     public let verdict: @Sendable (Int32) -> Verdict
@@ -167,25 +167,25 @@ public enum ShowcaseCatalog {
             ShowcaseStep(
                 id: "keys.keygen",
                 title: "Generate on-card PIV keys",
-                rationale: "keyroost generates the RSA-3072 secure-boot key (slot 9a) and the P-256 supervisor key (slot 9c) directly on the Token2 — the private key never exists off-card.",
+                rationale: "keyroost generates the RSA-3072 secure-boot key (slot 9a) and the P-256 supervisor key (slot 9c) directly on the main token — the private key never exists off-card.",
                 script: nil,
                 mode: .manual,
                 terminalHint: "Open keyroost (github.com/framefilter/keyroost) and generate the keys on the inserted token."
             ),
             ShowcaseStep(
                 id: "keys.enroll",
-                title: "Enroll the primary key (Token2)",
+                title: "Enroll the main token",
                 rationale: "Reads the on-card public key, writes the PKCS#11 signing config, and computes the Secure Boot v2 digest that gets burned later. Nothing is burned here.",
                 script: "1-enroll-key.sh",
-                args: [.literal("--name"), .literal("token2")],
+                args: [.literal("--name"), .literal("mainToken")],
                 mode: .inline
             ),
             ShowcaseStep(
-                id: "keys.enroll.thetis",
-                title: "Enroll the backup key (Thetis)",
-                rationale: "The same for the backup RSA-3072 signer (Thetis, DIGEST1). Signing every image with both keys means losing one token never locks you out of OTA recovery. Thetis needs OpenSC's PIV-II driver.",
+                id: "keys.enroll.backupToken",
+                title: "Enroll the backup token",
+                rationale: "The same for the backup RSA-3072 signer (DIGEST1). Signing every image with both keys means losing one token never locks you out of OTA recovery. The backup card needs OpenSC's PIV-II driver.",
                 script: "1-enroll-key.sh",
-                args: [.literal("--name"), .literal("thetis"), .literal("--driver"), .literal("PIV-II")],
+                args: [.literal("--name"), .literal("backupToken"), .literal("--driver"), .literal("PIV-II")],
                 mode: .inline
             ),
         ]
@@ -221,14 +221,14 @@ public enum ShowcaseCatalog {
                 rationale: "Builds the secure-boot bootloader + app and HSM-signs them with both keys (RSA-3072), so either boot signer can verify the image. Stamps the anti-rollback secure_version.",
                 script: "3-build-sign.sh",
                 mode: .terminal,
-                terminalHint: "Two-key sign: insert the Token2 (PIN), then swap to the Thetis (PIN)."
+                terminalHint: "Two-key sign: insert the main token (PIN), then swap to the backup token (PIN)."
             ),
             ShowcaseStep(
                 id: "device.flash",
                 title: "Flash + enable Secure Boot",
                 rationale: "Flashes the signed chain and burns BOTH key digests (DIGEST0 + DIGEST1) + SECURE_BOOT_EN. From here only signed firmware boots, and either token can. Irreversible.",
                 script: "4-flash-enable-secureboot.sh",
-                args: [.port, .literal("--keys"), .literal("token2,thetis"), .literal("--yes-burn")],
+                args: [.port, .literal("--keys"), .literal("mainToken,backupToken"), .literal("--yes-burn")],
                 mode: .terminal,
                 terminalHint: "espefuse will ask you to type BURN to confirm the digest + enable burns."
             ),
@@ -283,7 +283,7 @@ public enum ShowcaseCatalog {
                 script: "ota-attack-test.sh",
                 args: [.host, .literal("--build-base")],
                 mode: .terminal,
-                terminalHint: "Enter the Token2 PIN once (to sign the higher-version base).",
+                terminalHint: "Enter the token PIN once (to sign the higher-version base).",
                 verdict: ShowcaseStep.attackTestVerdict
             ),
             ShowcaseStep(
@@ -319,7 +319,7 @@ public enum ShowcaseCatalog {
                 script: "ota-update.sh",
                 args: [.host],
                 mode: .terminal,
-                terminalHint: "Two-key sign: insert the Token2 (PIN), then swap to the Thetis (PIN); delivery is automatic."
+                terminalHint: "Two-key sign: insert the main token (PIN), then swap to the backup token (PIN); delivery is automatic."
             ),
             ShowcaseStep(
                 id: "ota.push",

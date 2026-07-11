@@ -8,7 +8,7 @@
 #   - a PEM public-key FILE path, or
 #   - inline PEM text (as keyroost / `openssl ... -pubout` emit)
 # PEM is converted to 66-hex automatically. The identity lives in a Mac Secure
-# Enclave key or a hardware PIV key (e.g. a Token2 in slot 9c).
+# Enclave key or a hardware PIV key (e.g. a PIV key in slot 9c).
 #
 # Add --efuse-hmac (4th arg) for a chip whose identity is rooted in a read-protected
 # eFuse HMAC key (see docs/formal/EFUSE-HARDENING.md).

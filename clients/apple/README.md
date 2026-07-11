@@ -5,9 +5,9 @@ key in this Mac's **Secure Enclave** — the private key never leaves the enclav
 and **every command requires Touch ID**. No passkeys, no domains, no Associated
 Domains: it just works locally, which is what makes it a clean demo.
 
-A hardware security key (e.g. a Token2 in **PIV** mode) produces the same P-256
+A hardware security key (e.g. a main token in **PIV** mode) produces the same P-256
 signature, so it drops in behind the same `CommandSigner` protocol with **zero
-firmware change** — see [Hardware-key supervisor](#hardware-key-supervisor-piv--token2)
+firmware change** — see [Hardware-key supervisor](#hardware-key-supervisor-piv--mainToken)
 below (implemented and hardware-validated).
 
 This is reference client #1 for the wire protocol in
@@ -79,19 +79,19 @@ re-signing). Relax that to per-session later if desired.
 > Password* (no re-registration needed — `.userPresence` keys aren't bound to a
 > specific enrollment). Touch ID also needs the **signed** (Xcode-built) app.
 
-## Hardware-key supervisor (PIV / Token2)
+## Hardware-key supervisor (PIV / main token)
 
 The Supervisor identity can live on a **portable hardware security key** in PIV
 mode instead of this Mac's enclave — the same P-256 `CommandSigner`, so **zero
 firmware change**. Unlike an enclave key (bound to one Mac), the stick authorizes
 from any Mac and its private key never leaves the card (PIN-gated). Validated
-end-to-end against a **Token2 (PIV+FIDO+CCID)**.
+end-to-end against a **main token (PIV+FIDO+CCID)**.
 
 1. **Provision the card:** generate an **ECCP256** key + **self-signed cert** in
    slot **9c** (Digital Signature — PIN per signature). The cert is required —
    macOS only surfaces a card key that has one.
 2. **Insert the key** so macOS's native PIV driver (`pivtoken`) picks it up. Some
-   vendors (Token2) ship their own CCID driver, so the card is *not* auto-published
+   vendors (main token) ship their own CCID driver, so the card is *not* auto-published
    — a **fresh physical insert** is needed. Confirm:
    ```sh
    security list-smartcards          # must list com.apple.pivtoken:<GUID>
@@ -109,7 +109,7 @@ end-to-end against a **Token2 (PIV+FIDO+CCID)**.
    → register roles / provision keys (a card **PIN** per signature; slot 9c does
    not cache).
 
-> **Same card, two roles.** The Token2's PIV applet also holds the device's
+> **Same card, two roles.** The the main token's PIV applet also holds the device's
 > **RSA-3072 Secure Boot v2 signing key** in slot **9a** (ECC supervisor in 9c,
 > RSA release-signer in 9a) — validated end-to-end. See
 > [`docs/formal/EFUSE-HARDENING.md`](../../docs/formal/EFUSE-HARDENING.md).

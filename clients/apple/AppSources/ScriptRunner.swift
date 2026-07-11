@@ -6,7 +6,7 @@ import CriticalInfraKit
 /// stdout+stderr to the UI and deriving a `Verdict` from the exit code. macOS-only — `Process`
 /// and shell tooling don't exist on iOS.
 ///
-/// Only `.inline` steps are ever run here; anything with an interactive gate (Token2 PIN,
+/// Only `.inline` steps are ever run here; anything with an interactive gate (token PIN,
 /// `espefuse` BURN confirm, backup-token `read -p`) goes through `TerminalLauncher` instead — a
 /// pipe can't answer those prompts.
 @MainActor

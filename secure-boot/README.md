@@ -24,8 +24,8 @@ in [`../provision/`](../provision/) — one parameterized script per stage. In p
 
 ```sh
 provision/0-toolchains.sh install                 # espsecure[hsm] venv at ~/.esptool-hsm, etc.
-provision/1-enroll-key.sh --name token2           # -> hsm-token2.ini, token2_pub.pem, token2_digest.bin
-provision/1-enroll-key.sh --name thetis --driver PIV-II
+provision/1-enroll-key.sh --name mainToken           # -> hsm-mainToken.ini, mainToken_pub.pem, mainToken_digest.bin
+provision/1-enroll-key.sh --name backupToken --driver PIV-II
 ```
 
 This directory holds the two pieces those stages reuse: the **bootloader project**
@@ -34,12 +34,12 @@ This directory holds the two pieces those stages reuse: the **bootloader project
 ## Sign a bootloader (or any image) standalone
 
 `provision/3-build-sign.sh` calls this for you; run it directly only for one-offs
-(defaults read `hsm-token2.ini` / `token2_pub.pem` from this directory):
+(defaults read `hsm-mainToken.ini` / `mainToken_pub.pem` from this directory):
 
 ```sh
 SKIP_BACKUP=1 ./sign-secure-boot.sh build/bootloader/bootloader.bin bootloader-signed.bin
 ```
-(For the Thetis backup too: drop `SKIP_BACKUP`; it appends `hsm-thetis.ini` / `thetis_pub.pem`.)
+(For the backup token backup too: drop `SKIP_BACKUP`; it appends `hsm-backupToken.ini` / `backupToken_pub.pem`.)
 
 ## Rebuild + sign + flash the esp-hal app
 
@@ -47,10 +47,10 @@ That's stage 5 — a clean, parameterized command (no env-var prefixes):
 
 ```sh
 provision/5-flash-app.sh --ssid MyWifi --pass secret \
-  --supervisor 03c5803b…af3c --port /dev/cu.usbmodemXXXX --keys token2
+  --supervisor 03c5803b…af3c --port /dev/cu.usbmodemXXXX --keys mainToken
 ```
 
-Validated end-to-end (Token2 + Thetis on-card RSA-3072): bootloader **and** app both
+Validated end-to-end (main token + backup token on-card RSA-3072): bootloader **and** app both
 2-key HSM-signed and `verify-signature`-clean, offline, zero burns.
 
 > **Phase B** — the irreversible eFuse burns (`SECURE_BOOT_DIGEST0/1` + `SECURE_BOOT_EN`)

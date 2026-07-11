@@ -4,8 +4,8 @@
 # Defaults to flash + REHEARSE the burns; add --yes-burn to burn.
 # See docs/formal/SECURE-BOOT-V2.md Phase B.  ⚠ do the FIRST enable on a spare board.
 #
-#   provision/4-flash-enable-secureboot.sh --port /dev/cu.XXXX --keys token2,thetis
-#   provision/4-flash-enable-secureboot.sh --port /dev/cu.XXXX --keys token2,thetis --yes-burn
+#   provision/4-flash-enable-secureboot.sh --port /dev/cu.XXXX --keys mainToken,backupToken
+#   provision/4-flash-enable-secureboot.sh --port /dev/cu.XXXX --keys mainToken,backupToken --yes-burn
 #
 #   --port <dev>     board in download mode
 #   --keys <a,b>     enrolled names -> DIGEST0 = a, DIGEST1 = b (key blocks KEY1/KEY2)
@@ -13,7 +13,7 @@
 #   --yes-burn       actually burn SECURE_BOOT_DIGEST* + SECURE_BOOT_EN (permanent)
 source "$(dirname "$0")/lib.sh"
 
-PORT="" KEYS="token2,thetis" INDIR="$SB/out" BURN=0
+PORT="" KEYS="mainToken,backupToken" INDIR="$SB/out" BURN=0
 while [ $# -gt 0 ]; do case "$1" in
   --port) PORT="$2"; shift 2;; --keys) KEYS="$2"; shift 2;;
   --indir) INDIR="$2"; shift 2;; --yes-burn) BURN=1; shift;;

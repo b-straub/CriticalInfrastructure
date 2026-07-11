@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import CriticalInfraKit
 
-/// Launches an interactive `provision/*.sh` step in a real terminal (so the Token2 PIN, the
+/// Launches an interactive `provision/*.sh` step in a real terminal (so the token PIN, the
 /// `espefuse` BURN confirmation, and the backup-token `read -p` prompts all work), plus a
 /// copy-to-clipboard fallback. macOS-only.
 enum TerminalLauncher {

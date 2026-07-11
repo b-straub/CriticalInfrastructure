@@ -13,25 +13,25 @@ ever shared between them:
 
 | Key | Home | Role |
 |-----|------|------|
-| **Supervisor identity** | **Token2 PIV ECCP256** slot 9c, or Mac Secure Enclave (Touch ID) | signs commands, issues role certificates |
-| **Firmware secure-boot** | **Token2 PIV, RSA-3072** slot 9a | signs the Secure Boot v2 firmware image; eFuse stores only its public-key digest |
+| **Supervisor identity** | **main token PIV ECCP256** slot 9c, or Mac Secure Enclave (Touch ID) | signs commands, issues role certificates |
+| **Firmware secure-boot** | **main token PIV, RSA-3072** slot 9a | signs the Secure Boot v2 firmware image; eFuse stores only its public-key digest |
 | **Device identity + flash key** | **ESP32 eFuse** (HMAC-KDF root + XTS-AES) | per-device X25519/Ed25519 seeds and the flash-encryption key; hardware-only, never leaves the chip |
 
-On the reference board a single **Token2 PIN+ (release 3.3)** holds two of these
+On the reference board a single **PIV token** holds two of these
 domains on its **PIV** applet — both validated end-to-end: the **supervisor**
 (ECCP256, slot 9c) and the **secure-boot signer** (RSA-3072, slot 9a). In
 production you would split the rarely-used release-signing key onto its own
 token; for this demo one device is fine.
 
-### Secure-boot signing — RSA-3072 on the Token2 PIV (validated)
+### Secure-boot signing — RSA-3072 on the main token PIV (validated)
 
 ESP32-S3 Secure Boot v2 requires **RSA-3072-PSS** (SHA-256) — the S3 has no ECDSA
 secure-boot path, so the signing key *must* be RSA-3072. Only the **SHA-256 digest
 of the public key** is burned into eFuse (`SECURE_BOOT_DIGEST0`, up to 3 keys); the
 private key stays on the authenticator. A Mac's Secure Enclave can't substitute
-(P-256 only, no RSA), which is why this key lives on the Token2 PIV.
+(P-256 only, no RSA), which is why this key lives on the main token PIV.
 
-**The Token2 PIV applet does this — validated end-to-end on the reference board.**
+**The main token PIV applet does this — validated end-to-end on the reference board.**
 Its `SELECT AID` response advertises RSA 1024/2048/**3072**/4096 (the Windows
 Companion App's PIV *generate* dialog only exposes 2048/4096, but the applet
 supports 3072), and OpenSC's PKCS#11 module exposes the exact primitive:
@@ -59,7 +59,7 @@ openssl genrsa -out sb_key.pem 3072
 openssl req -new -x509 -key sb_key.pem -sha256 -days 7300 \
   -subj "/CN=ESP32-S3 Secure Boot Signer" -out sb_cert.pem
 openssl pkcs12 -export -inkey sb_key.pem -in sb_cert.pem -out sb_key.p12 -passout pass:CHANGEME
-#  → import sb_key.p12 into slot 9a (Token2 Companion App), then destroy the copy:
+#  → import sb_key.p12 into slot 9a (main token Companion App), then destroy the copy:
 rm -P sb_key.pem sb_key.p12        # macOS overwrite+delete (Linux: shred -u)
 ```
 Prefer on-card generation — the imported key existed off-card during generation.
@@ -73,13 +73,13 @@ openssl rsa -pubin -inform DER -in sb_pub.der -pubout -out sb_pub.pem
 **Enroll a backup before you burn.** An on-card key can't be exported — lose the
 token after `SECURE_BOOT_EN` and you can never sign firmware for those devices
 again. Generate a *second* on-card key on a backup token and enroll its digest too
-(Secure Boot v2 trusts up to 3). Validated here with a **Token2** (`DIGEST0`,
-primary) and a **Thetis** (`DIGEST1`, backup) PIV RSA-3072 key — each signs *and*
+(Secure Boot v2 trusts up to 3). Validated here with a **main token** (`DIGEST0`,
+primary) and a **backup token** (`DIGEST1`, backup) PIV RSA-3072 key — each signs *and*
 verifies a Secure Boot v2 image.
 
-*OpenSC driver quirk:* some cards aren't auto-detected as PIV — the Thetis reports
+*OpenSC driver quirk:* some cards aren't auto-detected as PIV — the backup token reports
 *"Unsupported card"* until you force the driver, so prefix **`OPENSC_DRIVER=PIV-II`**
-on the `espsecure` / `pkcs11-tool` calls (the Token2 doesn't need it).
+on the `espsecure` / `pkcs11-tool` calls (the main token doesn't need it).
 
 **Sign (validated):**
 ```sh
@@ -97,7 +97,7 @@ espsecure verify-signature --version 2 --keyfile sb_pub.pem signed.bin        # 
 espsecure digest-sbv2-public-key --keyfile sb_pub.pem --output sb_digest.bin  # the 32-byte SECURE_BOOT_DIGEST0
 ```
 `esp_hsm_sign` signs with `RSA_PKCS_PSS(SHA256, MGF1-SHA256, salt=32)` — exactly the
-mechanism above. Confirmed on hardware: the Token2 produced a Secure Boot v2
+mechanism above. Confirmed on hardware: the main token produced a Secure Boot v2
 signature that `verify-signature` accepts.
 
 **Enabling Secure Boot v2 is a separate, brick-prone step** beyond signing: the

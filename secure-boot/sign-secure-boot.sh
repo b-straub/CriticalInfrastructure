@@ -7,8 +7,8 @@
 # defaults below let you run it standalone from the secure-boot/ directory.
 # Config via env (defaults in parentheses):
 #   ESPSECURE     espsecure binary          (~/.esptool-hsm/bin/espsecure if present, else espsecure)
-#   PRIMARY_INI   primary token hsm_config  (hsm-token2.ini)   PRIMARY_PUB (token2_pub.pem)
-#   BACKUP_INI    backup  token hsm_config  (hsm-thetis.ini)   BACKUP_PUB  (thetis_pub.pem)
+#   PRIMARY_INI   primary token hsm_config  (hsm-mainToken.ini)   PRIMARY_PUB (mainToken_pub.pem)
+#   BACKUP_INI    backup  token hsm_config  (hsm-backupToken.ini)   BACKUP_PUB  (backupToken_pub.pem)
 #   BACKUP_DRIVER OpenSC driver for the backup (PIV-II — some cards need it)
 #   SKIP_BACKUP=1 sign with the primary only
 set -euo pipefail
@@ -16,8 +16,8 @@ set -euo pipefail
 [ $# -eq 2 ] || { echo "usage: $0 <unsigned.bin> <signed.bin>"; exit 1; }
 IN="$1"; OUT="$2"
 ES="${ESPSECURE:-$( [ -x "$HOME/.esptool-hsm/bin/espsecure" ] && echo "$HOME/.esptool-hsm/bin/espsecure" || echo espsecure )}"
-PRIMARY_INI="${PRIMARY_INI:-hsm-token2.ini}"; PRIMARY_PUB="${PRIMARY_PUB:-token2_pub.pem}"
-BACKUP_INI="${BACKUP_INI:-hsm-thetis.ini}";  BACKUP_PUB="${BACKUP_PUB:-thetis_pub.pem}"
+PRIMARY_INI="${PRIMARY_INI:-hsm-mainToken.ini}"; PRIMARY_PUB="${PRIMARY_PUB:-mainToken_pub.pem}"
+BACKUP_INI="${BACKUP_INI:-hsm-backupToken.ini}";  BACKUP_PUB="${BACKUP_PUB:-backupToken_pub.pem}"
 BACKUP_DRIVER="${BACKUP_DRIVER:-PIV-II}"
 
 if [ "${SKIP_BACKUP:-0}" != "1" ]; then

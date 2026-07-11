@@ -272,14 +272,14 @@ and the private key never leaves the card.
 `SecKey` under `kSecAttrAccessGroupToken`), signs with
 `SecKeyCreateSignature(.ecdsaSignatureMessageX962SHA256)`, and reshapes the DER
 result to the 64-byte r‖s the firmware's `p256` verifier expects. Validated
-end-to-end against a **Token2 (PIV+FIDO+CCID)**: card sign → DER→raw64 →
+end-to-end against a **main token (PIV+FIDO+CCID)**: card sign → DER→raw64 →
 `clientauth::verify` accepts (identical bytes to the enclave path).
 
-**Provisioning (e.g. Token2, slot 9c):**
+**Provisioning (e.g. main token, slot 9c):**
 - Generate an **ECCP256** key + **self-signed certificate** in slot **9c** (Digital
   Signature → PIN on *every* signature). The cert is mandatory — macOS only
   surfaces a card key to the keychain when a matching cert is present.
-- **Discovery caveat:** some vendors (Token2) ship their own CCID driver + smart-card
+- **Discovery caveat:** some vendors (main token) ship their own CCID driver + smart-card
   daemon, so the card is **not** auto-published to CryptoTokenKit. A *fresh physical
   insert* is required for Apple's `pivtoken` to attach; confirm with
   `security list-smartcards` (it must list a `com.apple.pivtoken:<GUID>` token).
@@ -300,7 +300,7 @@ auth signature Ed25519 → P-256 does not change the symbolic protocol.
 
 - [x] Client identity: **P-256 in the Secure Enclave** (Touch ID per command),
       firmware verifies P-256 via `clientauth`, feature-gated to `udp-transport`;
-      HTTP flavor stays Ed25519 (§5). A **PIV hardware key** (Token2) is an
+      HTTP flavor stays Ed25519 (§5). A **PIV hardware key** (main token) is an
       implemented, hardware-validated drop-in supervisor — same P-256, no firmware
       change (§5.2).
 - [x] Port: **reused `8080/udp`**, promoted to `shared::terminology::SUPERVISOR_PORT`.

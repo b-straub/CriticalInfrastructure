@@ -79,7 +79,7 @@ app path (`mark valid`). Keep the scope honest.
 builds + signs the chain (custom table emitted automatically), flashes the same signed
 app into `ota_0` **and** `ota_1`, and blanks `otadata` (→ boots `ota_0`):
 ```sh
-provision/ota-flash-slots.sh --port <PORT> --ssid <SSID> --pass <PASS> --supervisor <KEY> --keys token2
+provision/ota-flash-slots.sh --port <PORT> --ssid <SSID> --pass <PASS> --supervisor <KEY> --keys mainToken
 ```
 Reset and watch serial — expect the bootloader to enumerate both slots and load `ota_0`:
 ```
@@ -118,7 +118,7 @@ marks it `New`, and resets. On the next boot it confirms itself `Valid`
 (`ota.rs::confirm_if_pending`). Entirely on-device — no network.
 
 ```sh
-provision/ota-apply.sh --port <PORT> --ssid <S> --pass <P> --supervisor <K> --keys token2
+provision/ota-apply.sh --port <PORT> --ssid <S> --pass <P> --supervisor <K> --keys mainToken
 ```
 > ✅ **Verified on hardware:** `boot ota_0` → *copying full image (856 KiB)* → *wrote into
 > Ota1* → *activated (New); resetting* → `boot ota_1 @ 0x230000` → *self-test passed → marked
@@ -142,7 +142,7 @@ sends the image from the host over Wi-Fi.
 
 ```sh
 # on the device: build+sign with ota-net, flash to a slot, boot it (note its "Got IP")
-provision/3-build-sign.sh --ssid <S> --pass <P> --supervisor <K> --keys token2 \
+provision/3-build-sign.sh --ssid <S> --pass <P> --supervisor <K> --keys mainToken \
   --features "udp-transport,efuse-hmac-identity,ota-net" --skip-bootloader
 esptool --chip esp32s3 --port <PORT> --after no-reset write-flash 0x20000 secure-boot/out/app-signed.bin
 provision/ota-switch-slot.sh --port <PORT> --slot 0
@@ -157,7 +157,7 @@ provision/ota-push.sh --host <device-ip> --image secure-boot/out/app-signed.bin
 **One pass (day-to-day update).** Once the board is provisioned and running `ota-net`,
 `provision/ota-update.sh` does build → sign → deliver in a single command. Wi-Fi creds,
 supervisor pubkey and the device IP come from the Keychain (`provision/store-creds.sh`,
-incl. `--host <ip>`), so there are no args and the Token2 PIN is entered once:
+incl. `--host <ip>`), so there are no args and the token PIN is entered once:
 
 ```sh
 provision/store-creds.sh --host 192.168.178.133   # once

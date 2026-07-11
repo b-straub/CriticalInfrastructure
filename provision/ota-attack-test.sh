@@ -8,21 +8,21 @@
 #
 # The device checks the app-descriptor version BEFORE the signature. So signature-path attacks
 # (tampered body/sig/key) only REACH the signature check when the pushed image's version is above
-# the device's floor. Use --build-base to sign a FRESH higher-version base first (one Token2 PIN):
+# the device's floor. Use --build-base to sign a FRESH higher-version base first (one token PIN):
 # without it, those attacks are caught by the version gate and reported as "gate" (still refused,
 # but the intended check wasn't exercised).
 #
-#   --build-base        build+sign a fresh higher-version base via provision/3 (Token2 PIN once),
+#   --build-base        build+sign a fresh higher-version base via provision/3 (token PIN once),
 #                       then craft the attacks from it — exercises the signature path on-device
 #   --secure-version N  base version to stamp (implies --build-base; default: epoch, > any floor)
 #   --host <ip>         device IP        (default: Keychain, provision/store-creds.sh)
 #   --image <file>      base to craft from when NOT building (default: secure-boot/out/app-signed.bin)
 #   --features <list>   base build features (default: udp-transport,efuse-hmac-identity,ota-net)
-#   --keys <a,b>        signing key(s)   (default: token2)
+#   --keys <a,b>        signing key(s)   (default: mainToken)
 #   --port <n>          device OTA port  (default: 8081)
 source "$(dirname "$0")/lib.sh"
 
-HOST="" IMG="" TPORT=8081 BUILD_BASE=0 SECVER="" FEATURES="udp-transport,efuse-hmac-identity,ota-net" KEYS="token2"
+HOST="" IMG="" TPORT=8081 BUILD_BASE=0 SECVER="" FEATURES="udp-transport,efuse-hmac-identity,ota-net" KEYS="mainToken"
 while [ $# -gt 0 ]; do case "$1" in
   --host) HOST="$2"; shift 2;; --image) IMG="$2"; shift 2;; --port) TPORT="$2"; shift 2;;
   --build-base) BUILD_BASE=1; shift;;
@@ -37,7 +37,7 @@ need python3 "install Python 3"
 
 if [ "$BUILD_BASE" = 1 ]; then
   BASEDIR="$(mktemp -d)"; trap 'rm -rf "$BASEDIR"' EXIT
-  note "building a fresh higher-version signed base (enter the Token2 PIN once) — features: $FEATURES"
+  note "building a fresh higher-version signed base (enter the token PIN once) — features: $FEATURES"
   "$REPO/provision/3-build-sign.sh" --features "$FEATURES" --keys "$KEYS" --skip-bootloader \
     ${SECVER:+--secure-version "$SECVER"} --outdir "$BASEDIR"
   IMG="$BASEDIR/app-signed.bin"

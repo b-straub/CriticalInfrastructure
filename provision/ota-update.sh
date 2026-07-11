@@ -9,17 +9,17 @@
 #
 #   --host <ip>       device IP on the Wi-Fi   (default: Keychain, provision/store-creds.sh)
 #   --features <list> cargo features to build  (default: udp-transport,efuse-hmac-identity,ota-net)
-#   --keys <a,b>      signing key(s), first = primary                 (default: token2,thetis)
+#   --keys <a,b>      signing key(s), first = primary                 (default: mainToken,backupToken)
 #   --port <n>        device OTA TCP port                             (default: 8081)
 #
 # The build keeps the current secure-boot layout (bootloader + partition table stay put) —
 # only the app is rebuilt, signed, and streamed into the inactive slot. The default signs with
-# BOTH keys (token2,thetis: insert the primary, then swap to the backup — a PIN each) so the
+# BOTH keys (mainToken,backupToken: insert the primary, then swap to the backup — a PIN each) so the
 # deployed image bakes both digests and either boot signer can OTA-recover it; pass
-# --keys token2 for a quick single-key build. Secure Boot verifies the image on boot.
+# --keys mainToken for a quick single-key build. Secure Boot verifies the image on boot.
 source "$(dirname "$0")/lib.sh"
 
-HOST="" FEATURES="udp-transport,efuse-hmac-identity,ota-net" KEYS="token2,thetis" TPORT=8081
+HOST="" FEATURES="udp-transport,efuse-hmac-identity,ota-net" KEYS="mainToken,backupToken" TPORT=8081
 while [ $# -gt 0 ]; do case "$1" in
   --host) HOST="$2"; shift 2;; --features) FEATURES="$2"; shift 2;;
   --keys) KEYS="$2"; shift 2;; --port) TPORT="$2"; shift 2;;
@@ -30,7 +30,7 @@ load_creds  # SSID/PASS/SUP + HOST from the Keychain if not passed (provision/st
 [ -n "$HOST" ] || die "no device IP — pass --host <ip> or store it: provision/store-creds.sh --host <ip>"
 case "$FEATURES" in *ota-net*) ;; *) die "--features must include ota-net (the OTA server) for a network update";; esac
 
-note "1/2 build + sign the app (Token2 PIN — keep bootloader/table, --skip-bootloader)"
+note "1/2 build + sign the app (token PIN — keep bootloader/table, --skip-bootloader)"
 "$REPO/provision/3-build-sign.sh" --features "$FEATURES" --keys "$KEYS" --skip-bootloader
 
 note "2/2 deliver over the network -> $HOST:$TPORT"

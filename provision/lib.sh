@@ -51,7 +51,7 @@ supervisor_to_hex() {
 key_ini()    { printf '%s' "$SB/hsm-$1.ini"; }
 key_pub()    { printf '%s' "$SB/$1_pub.pem"; }
 key_digest() { printf '%s' "$SB/$1_digest.bin"; }
-# Some cards (e.g. Thetis) need OpenSC's PIV-II driver; stage 1 records it here if so.
+# Some cards (e.g. backup token) need OpenSC's PIV-II driver; stage 1 records it here if so.
 key_driver() { local f="$SB/hsm-$1.driver"; [ -f "$f" ] && cat "$f" || true; }
 
 # --- provisioning creds in the macOS Keychain (store once, don't retype each build) ---

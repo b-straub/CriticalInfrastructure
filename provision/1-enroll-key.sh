@@ -6,11 +6,11 @@
 # PUBLIC half, writes its PKCS#11 signing config, and computes its Secure Boot v2
 # digest — the three artifacts the later stages consume. Nothing is burned.
 #
-#   provision/1-enroll-key.sh --name token2
-#   provision/1-enroll-key.sh --name thetis --driver PIV-II
+#   provision/1-enroll-key.sh --name mainToken
+#   provision/1-enroll-key.sh --name backupToken --driver PIV-II
 #
 #   --name <n>          short name -> secure-boot/{hsm-<n>.ini, <n>_pub.pem, <n>_digest.bin}
-#   --driver <d>        OpenSC driver the card needs (e.g. PIV-II for Thetis); omit for Token2
+#   --driver <d>        OpenSC driver the card needs (e.g. PIV-II for the backup token); omit for the main token
 #   --pubkey-label <l>  PKCS#11 label of the public key   (default: "PIV AUTH pubkey")
 #   --key-label <l>     PKCS#11 label of the private key  (default: "PIV AUTH key")
 #   --module <path>     PKCS#11 module (default: /opt/homebrew/lib/opensc-pkcs11.so)

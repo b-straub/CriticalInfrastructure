@@ -4,17 +4,17 @@
 # untouched; the on-device secure bootloader verifies the app on boot.
 #
 #   provision/5-flash-app.sh --ssid X --pass Y --supervisor <k> --port /dev/cu.XXXX
-#   provision/5-flash-app.sh --ssid X --pass Y --supervisor <k> --port /dev/cu.XXXX --keys token2,thetis
+#   provision/5-flash-app.sh --ssid X --pass Y --supervisor <k> --port /dev/cu.XXXX --keys mainToken,backupToken
 #
 #   --ssid/--pass       Wi-Fi creds baked into the app
 #   --supervisor <k>    P-256 supervisor pubkey: 66-hex, PEM file, or inline PEM
 #   --port <dev>        board serial port
-#   --keys <a,b>        signing key(s), first = primary  (default: token2,thetis)
+#   --keys <a,b>        signing key(s), first = primary  (default: mainToken,backupToken)
 #   --features <list>   cargo features (default: udp-transport,efuse-hmac-identity)
 #   --app-offset <hex>  app slot (default: 0x20000)
 source "$(dirname "$0")/lib.sh"
 
-SSID="" PASS="" SUP="" PORT="" KEYS="token2,thetis" FEATURES="udp-transport,efuse-hmac-identity" OFF="$APP_OFFSET_DEFAULT"
+SSID="" PASS="" SUP="" PORT="" KEYS="mainToken,backupToken" FEATURES="udp-transport,efuse-hmac-identity" OFF="$APP_OFFSET_DEFAULT"
 while [ $# -gt 0 ]; do case "$1" in
   --ssid) SSID="$2"; shift 2;; --pass) PASS="$2"; shift 2;; --supervisor) SUP="$2"; shift 2;;
   --port) PORT="$2"; shift 2;; --keys) KEYS="$2"; shift 2;;

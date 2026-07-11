@@ -17,10 +17,10 @@ This project demonstrates that it is now possible to build *impenetrable* embedd
 
 ### Features
 *   **Memory-Safe Firmware:** 100% Rust (`no_std`) — no buffer overflows, no memory corruption.
-*   **Hardware Cryptographic RBAC:** every command carries a hardware-held **P-256** client signature — from a Mac's **Secure Enclave** (Touch ID) or a **Token2 PIV** hardware key — and the device verifies a supervisor→role certificate chain before acting.
+*   **Hardware Cryptographic RBAC:** every command carries a hardware-held **P-256** client signature — from a Mac's **Secure Enclave** (Touch ID) or a **PIV** hardware key — and the device verifies a supervisor→role certificate chain before acting.
 *   **Native client, encrypted envelope:** a **SwiftUI macOS app** drives the device over a raw UDP command protocol — one signed + encrypted envelope (X25519 + AES-GCM + Ed25519), machine-checked in Tamarin — see [`clients/apple`](clients/apple).
 *   **Hardware-Rooted Device Identity (burned + validated):** the device's X25519/Ed25519 keys are derived at boot from a **read-protected eFuse HMAC key** — the root never touches software and can't be cloned, even with physical access. On the reference board this is burned, with **JTAG disabled**; the secure-download read-lock and flash encryption are documented as the final seal.
-*   **HSM Secure-Boot Signing (validated):** RSA-3072-PSS Secure Boot v2 images are signed by a **Token2 PIV** key via OpenSC PKCS#11 — the private key never leaves the token (signed + verified end-to-end). Full Secure Boot v2 enablement (signed ESP-IDF bootloader + the irreversible digest/enable burns) is the documented last step.
+*   **HSM Secure-Boot Signing (validated):** RSA-3072-PSS Secure Boot v2 images are signed by a **PIV** key via OpenSC PKCS#11 — the private key never leaves the token (signed + verified end-to-end). Full Secure Boot v2 enablement (signed ESP-IDF bootloader + the irreversible digest/enable burns) is the documented last step.
 
 ## Hardware Schematic
 
@@ -105,9 +105,9 @@ Wi-Fi credentials and the trusted supervisor key (P-256, 66-hex compressed) are 
 open clients/apple/CriticalInfra.xcodeproj    # ⌘R (destination: My Mac)
 ```
 
-A native **SwiftUI macOS app** drives the device over UDP — every command is signed by this Mac's **Secure Enclave** (Touch ID) or a **Token2 PIV** hardware key, then wrapped in the encrypted envelope. Enter the device's LAN IP (shown on the LCD) and the public keys from the boot log; nothing is hardcoded.
+A native **SwiftUI macOS app** drives the device over UDP — every command is signed by this Mac's **Secure Enclave** (Touch ID) or a **PIV** hardware key, then wrapped in the encrypted envelope. Enter the device's LAN IP (shown on the LCD) and the public keys from the boot log; nothing is hardcoded.
 
-The **supervisor** identity can be a portable **Token2 PIV** key (ECCP256 in slot 9c, PIN per command) rather than a Mac-bound enclave key — the same card that signs Secure Boot v2 images (RSA-3072 in slot 9a). Full walkthrough — hardware-key provisioning, the macOS CryptoTokenKit gotchas, Touch ID — in [`clients/apple/README.md`](clients/apple/README.md).
+The **supervisor** identity can be a portable **PIV** key (ECCP256 in slot 9c, PIN per command) rather than a Mac-bound enclave key — the same card that signs Secure Boot v2 images (RSA-3072 in slot 9a). Full walkthrough — hardware-key provisioning, the macOS CryptoTokenKit gotchas, Touch ID — in [`clients/apple/README.md`](clients/apple/README.md).
 
 ### Production hardening (eFuse)
 
@@ -120,11 +120,11 @@ Root the device identity in a **read-protected eFuse HMAC key** instead of flash
 cd target-esp32s3 && cargo build --release --no-default-features --features "udp-transport,efuse-hmac-identity"
 ```
 
-The full **hardware-validated** runbook — HMAC identity root → JTAG off → secure-download read-lock, plus the Token2 RSA-3072 Secure Boot v2 signing flow — is in [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md). Every command was rehearsed on a virtual ESP32-S3 (`espefuse --virt`) before burning; on the reference board the identity + JTAG stages are done.
+The full **hardware-validated** runbook — HMAC identity root → JTAG off → secure-download read-lock, plus the main token's RSA-3072 Secure Boot v2 signing flow — is in [`docs/formal/EFUSE-HARDENING.md`](docs/formal/EFUSE-HARDENING.md). Every command was rehearsed on a virtual ESP32-S3 (`espefuse --virt`) before burning; on the reference board the identity + JTAG stages are done.
 
 > ⚠️ eFuse writes are **irreversible** (bits only go 0 → 1). Rehearse with `./efuse-harden.sh rehearse`, verify between stages, and leave the read-lock (`ENABLE_SECURITY_DOWNLOAD`) and Secure Boot for last.
 
-**Secure Boot v2** (only signed firmware boots) is a further, brick-prone step — the RSA-3072 signing is validated (Token2 + Thetis via PKCS#11/HSM), and the staged enablement runbook is in [`docs/formal/SECURE-BOOT-V2.md`](docs/formal/SECURE-BOOT-V2.md).
+**Secure Boot v2** (only signed firmware boots) is a further, brick-prone step — the RSA-3072 signing is validated (both PIV tokens via PKCS#11/HSM), and the staged enablement runbook is in [`docs/formal/SECURE-BOOT-V2.md`](docs/formal/SECURE-BOOT-V2.md).
 
 ## License
 

@@ -6,15 +6,15 @@
 # slot via OtaUpdater, activates it (state New), reboots into it, and marks it Valid —
 # a complete OTA cycle with NO network. See docs/formal/OTA.md step 4.2.
 #
-#   provision/ota-apply.sh --port <dev> --ssid <S> --pass <P> --supervisor <K> [--keys token2]
+#   provision/ota-apply.sh --port <dev> --ssid <S> --pass <P> --supervisor <K> [--keys mainToken]
 #
 #   --port <dev>        board serial port
 #   --ssid/--pass       Wi-Fi creds baked into the app
 #   --supervisor <k>    P-256 supervisor pubkey: 66-hex, PEM file, or inline PEM
-#   --keys <a,b>        signing key(s), first = primary  (default: token2)
+#   --keys <a,b>        signing key(s), first = primary  (default: mainToken)
 source "$(dirname "$0")/lib.sh"
 
-PORT="" SSID="" PASS="" SUP="" KEYS="token2" FEATURES="udp-transport,efuse-hmac-identity,ota-selftest"
+PORT="" SSID="" PASS="" SUP="" KEYS="mainToken" FEATURES="udp-transport,efuse-hmac-identity,ota-selftest"
 while [ $# -gt 0 ]; do case "$1" in
   --port) PORT="$2"; shift 2;; --ssid) SSID="$2"; shift 2;; --pass) PASS="$2"; shift 2;;
   --supervisor) SUP="$2"; shift 2;; --keys) KEYS="$2"; shift 2;;

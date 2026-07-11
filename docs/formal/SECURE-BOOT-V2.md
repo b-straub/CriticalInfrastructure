@@ -3,7 +3,7 @@
 Secure Boot v2 makes the ROM run **only firmware signed by an enrolled key**. It is
 the layer *above* the eFuse hardening in [`EFUSE-HARDENING.md`](./EFUSE-HARDENING.md):
 that doc roots the *device identity* in hardware; this one roots *what code may
-boot*. The **signing** half is already validated end-to-end (Token2 + Thetis
+boot*. The **signing** half is already validated end-to-end (main token + backup token
 RSA-3072-PSS, see EFUSE-HARDENING.md § Secure-boot signing). What remains is the
 **bootloader integration + the irreversible enable**, below.
 
@@ -31,7 +31,7 @@ image at runtime.
 
 - **3 trustable digests** (`SECURE_BOOT_DIGEST0/1/2`); an image can carry **up to 3
   signature blocks**, so we sign each image with **both keys** → either enrolled key
-  verifies it. → `DIGEST0` = **Token2** (`fa05a2e9…c88f362`), `DIGEST1` = **Thetis**
+  verifies it. → `DIGEST0` = **main token** (`fa05a2e9…c88f362`), `DIGEST1` = **backup token**
   (`25263f48…14dc252`). They occupy key blocks **KEY1/KEY2** (KEY0 is the HMAC
   identity — no collision).
 - Digests + `SECURE_BOOT_EN` burn **on first boot** of a valid signed chain (or
@@ -46,9 +46,9 @@ image at runtime.
 
 - **ESP-IDF** installed (`idf.py`, `esptool`, `espsecure`) — this is separate from
   the espup Rust toolchain. `. $IDF_PATH/export.sh`.
-- The validated HSM setup: `esptool[hsm]`, an `hsm.ini` per token (Token2 = default
-  OpenSC; **Thetis needs `OPENSC_DRIVER=PIV-II`**), and the two public keys
-  (`token2_pub.pem`, `thetis_pub.pem`). All produced by
+- The validated HSM setup: `esptool[hsm]`, an `hsm.ini` per token (main token = default
+  OpenSC; **backup token needs `OPENSC_DRIVER=PIV-II`**), and the two public keys
+  (`mainToken_pub.pem`, `backupToken_pub.pem`). All produced by
   [`../../provision/1-enroll-key.sh`](../../provision/1-enroll-key.sh).
 - A **spare ESP32-S3**. A serial console on the USB-Serial-JTAG port.
 
@@ -57,7 +57,7 @@ image at runtime.
 ## Phase A — build + sign (no hardware, no burns)
 
 > **✅ Validated end-to-end** (ESP-IDF v5.5.4): the bootloader builds, and both the
-> bootloader and the esp-hal app were 2-key HSM-signed (Token2 + Thetis) and
+> bootloader and the esp-hal app were 2-key HSM-signed (main token + backup token) and
 > `verify-signature`-clean, offline. The reproducible bootloader project + a
 > `sign-secure-boot.sh` helper live in [`../../secure-boot/`](../../secure-boot/).
 
@@ -85,11 +85,11 @@ idf.py set-target esp32s3
 idf.py bootloader          # -> build/bootloader/bootloader.bin  (padded, no signature yet)
 ```
 
-**A3. HSM-sign the bootloader with BOTH keys** (Token2, then append Thetis):
+**A3. HSM-sign the bootloader with BOTH keys** (main token, then append backup token):
 ```sh
-espsecure sign-data --version 2 --hsm --hsm-config hsm-token2.ini \
+espsecure sign-data --version 2 --hsm --hsm-config hsm-mainToken.ini \
   --output bootloader-signed.bin build/bootloader/bootloader.bin
-OPENSC_DRIVER=PIV-II espsecure sign-data --version 2 --hsm --hsm-config hsm-thetis.ini \
+OPENSC_DRIVER=PIV-II espsecure sign-data --version 2 --hsm --hsm-config hsm-backupToken.ini \
   --append-signatures --output bootloader-signed.bin bootloader-signed.bin
 ```
 
@@ -106,10 +106,10 @@ espflash save-image --chip esp32s3 --merge=false \
 
 **A6. Verify every signature offline — must pass before any hardware:**
 ```sh
-espsecure verify-signature --version 2 --keyfile token2_pub.pem bootloader-signed.bin
-espsecure verify-signature --version 2 --keyfile thetis_pub.pem bootloader-signed.bin
-espsecure verify-signature --version 2 --keyfile token2_pub.pem app-signed.bin
-espsecure verify-signature --version 2 --keyfile thetis_pub.pem app-signed.bin
+espsecure verify-signature --version 2 --keyfile mainToken_pub.pem bootloader-signed.bin
+espsecure verify-signature --version 2 --keyfile backupToken_pub.pem bootloader-signed.bin
+espsecure verify-signature --version 2 --keyfile mainToken_pub.pem app-signed.bin
+espsecure verify-signature --version 2 --keyfile backupToken_pub.pem app-signed.bin
 ```
 All four `Signature block N … verification successful`. If any fail, **stop**.
 
@@ -162,7 +162,7 @@ If B3–B5 all hold on the spare, the chain is proven.
 ## Irreversibility & brick checklist
 
 - [ ] Signed images ready and `verify-signature`-clean **before** burning any digest.
-- [ ] Both digests enrolled (Token2 + Thetis) so a lost token isn't fatal.
+- [ ] Both digests enrolled (main token + backup token) so a lost token isn't fatal.
 - [ ] Never revoke all keys.
 - [ ] Accept: after enable, only signed firmware boots/flashes; USB-OTG off
       (USB-Serial-JTAG still flashes); no further eFuse read-protection unless
@@ -180,6 +180,6 @@ If B3–B5 all hold on the spare, the chain is proven.
 
 ---
 
-*Signing validated on real hardware (Token2 + Thetis, EFUSE-HARDENING.md). Bootloader
+*Signing validated on real hardware (main token + backup token, EFUSE-HARDENING.md). Bootloader
 integration + enable are staged here for a spare-board session. Do not run Phase B on
 the working unit until the spare passes B3–B5.*

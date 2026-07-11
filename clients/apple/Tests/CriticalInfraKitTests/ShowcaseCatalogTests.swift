@@ -69,7 +69,7 @@ final class ShowcaseCatalogTests: XCTestCase {
 
     // MARK: classification safety
 
-    /// The scripts that are safe to run headless (no Token2 PIN, no espefuse BURN, no `read -p`).
+    /// The scripts that are safe to run headless (no token PIN, no espefuse BURN, no `read -p`).
     private static let knownSafeInlineScripts: Set<String> = [
         "1-enroll-key.sh",       // reads the on-card public object only
         "2-efuse-harden.sh",     // inline only in the DRY-RUN form (no --yes-burn) — checked below
