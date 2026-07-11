@@ -20,7 +20,13 @@ PRIMARY_INI="${PRIMARY_INI:-hsm-token2.ini}"; PRIMARY_PUB="${PRIMARY_PUB:-token2
 BACKUP_INI="${BACKUP_INI:-hsm-thetis.ini}";  BACKUP_PUB="${BACKUP_PUB:-thetis_pub.pem}"
 BACKUP_DRIVER="${BACKUP_DRIVER:-PIV-II}"
 
-echo "==> [primary] insert the primary token — PIN prompt"
+if [ "${SKIP_BACKUP:-0}" != "1" ]; then
+  # Multi-key sign involves swapping cards; make the PRIMARY insertion explicit too, so a
+  # leftover backup token (e.g. from a prior test) doesn't get used as the primary.
+  read -r -p "==> [primary] insert the PRIMARY token, then press Enter… " _
+else
+  echo "==> [primary] insert the primary token — PIN prompt"
+fi
 "$ES" sign-data --version 2 --hsm --hsm-config "$PRIMARY_INI" --output "$OUT" "$IN"
 "$ES" verify-signature --version 2 --keyfile "$PRIMARY_PUB" "$OUT" >/dev/null && echo "    primary signature verified"
 
