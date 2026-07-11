@@ -100,22 +100,27 @@ try: s.close()
 except Exception: pass
 reason = resp[3:].strip().decode('utf-8', 'replace') if resp.startswith(b"ERR") else ""
 
-# Confirm reboot vs still-up: after the outcome is decided, an ACCEPT reboots (down a while),
-# a REJECT keeps :8081 listening (reachable again immediately).
+# Confirm reboot vs still-up: after the outcome is decided, an ACCEPT reboots (:8081 unreachable
+# for several seconds while it resets + rejoins Wi-Fi); a REJECT keeps it listening (reachable
+# immediately). Measure the down-streak by REAL elapsed time — a failed connect can itself take
+# up to the timeout, so a fixed per-iteration increment badly undercounts it.
 def reachable():
     try:
-        c = socket.create_connection((host, port), timeout=1); c.close(); return True
+        c = socket.create_connection((host, port), timeout=0.8); c.close(); return True
     except Exception:
         return False
-worst_down, streak = 0.0, 0.0
-end = time.time() + 12
+worst_down, down_since = 0.0, None
+end = time.time() + 18
 while time.time() < end:
     if reachable():
-        streak = 0.0
+        down_since = None
     else:
-        streak += 0.4; worst_down = max(worst_down, streak)
-    time.sleep(0.4)
-rebooted = worst_down >= 3.0
+        now = time.time()
+        if down_since is None:
+            down_since = now
+        worst_down = max(worst_down, now - down_since)
+    time.sleep(0.3)
+rebooted = worst_down >= 2.5
 
 print()
 if not rebooted:
