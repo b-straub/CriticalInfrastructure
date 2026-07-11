@@ -9,15 +9,17 @@
 #
 #   --host <ip>       device IP on the Wi-Fi   (default: Keychain, provision/store-creds.sh)
 #   --features <list> cargo features to build  (default: udp-transport,efuse-hmac-identity,ota-net)
-#   --keys <a,b>      signing key(s), first = primary                 (default: token2)
+#   --keys <a,b>      signing key(s), first = primary                 (default: token2,thetis)
 #   --port <n>        device OTA TCP port                             (default: 8081)
 #
 # The build keeps the current secure-boot layout (bootloader + partition table stay put) —
-# only the app is rebuilt, signed (Token2 PIN, once), and streamed into the inactive slot.
-# On an encrypted device the firmware encrypt-writes it; Secure Boot verifies it on boot.
+# only the app is rebuilt, signed, and streamed into the inactive slot. The default signs with
+# BOTH keys (token2,thetis: insert the primary, then swap to the backup — a PIN each) so the
+# deployed image bakes both digests and either boot signer can OTA-recover it; pass
+# --keys token2 for a quick single-key build. Secure Boot verifies the image on boot.
 source "$(dirname "$0")/lib.sh"
 
-HOST="" FEATURES="udp-transport,efuse-hmac-identity,ota-net" KEYS="token2" TPORT=8081
+HOST="" FEATURES="udp-transport,efuse-hmac-identity,ota-net" KEYS="token2,thetis" TPORT=8081
 while [ $# -gt 0 ]; do case "$1" in
   --host) HOST="$2"; shift 2;; --features) FEATURES="$2"; shift 2;;
   --keys) KEYS="$2"; shift 2;; --port) TPORT="$2"; shift 2;;

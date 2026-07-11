@@ -174,10 +174,18 @@ public enum ShowcaseCatalog {
             ),
             ShowcaseStep(
                 id: "keys.enroll",
-                title: "Enroll the key",
+                title: "Enroll the primary key (Token2)",
                 rationale: "Reads the on-card public key, writes the PKCS#11 signing config, and computes the Secure Boot v2 digest that gets burned later. Nothing is burned here.",
                 script: "1-enroll-key.sh",
                 args: [.literal("--name"), .literal("token2")],
+                mode: .inline
+            ),
+            ShowcaseStep(
+                id: "keys.enroll.thetis",
+                title: "Enroll the backup key (Thetis)",
+                rationale: "The same for the backup RSA-3072 signer (Thetis, DIGEST1). Signing every image with both keys means losing one token never locks you out of OTA recovery. Thetis needs OpenSC's PIV-II driver.",
+                script: "1-enroll-key.sh",
+                args: [.literal("--name"), .literal("thetis"), .literal("--driver"), .literal("PIV-II")],
                 mode: .inline
             ),
         ]
@@ -210,17 +218,17 @@ public enum ShowcaseCatalog {
             ShowcaseStep(
                 id: "device.buildsign",
                 title: "Build + sign the chain",
-                rationale: "Builds the secure-boot bootloader + app and HSM-signs them with the Token2 (RSA-3072). Stamps the anti-rollback secure_version.",
+                rationale: "Builds the secure-boot bootloader + app and HSM-signs them with both keys (RSA-3072), so either boot signer can verify the image. Stamps the anti-rollback secure_version.",
                 script: "3-build-sign.sh",
                 mode: .terminal,
-                terminalHint: "Enter the Token2 PIV PIN once when the card prompts."
+                terminalHint: "Two-key sign: insert the Token2 (PIN), then swap to the Thetis (PIN)."
             ),
             ShowcaseStep(
                 id: "device.flash",
                 title: "Flash + enable Secure Boot",
-                rationale: "Flashes the signed chain and burns the key digests + SECURE_BOOT_EN. From here only signed firmware boots. Irreversible.",
+                rationale: "Flashes the signed chain and burns BOTH key digests (DIGEST0 + DIGEST1) + SECURE_BOOT_EN. From here only signed firmware boots, and either token can. Irreversible.",
                 script: "4-flash-enable-secureboot.sh",
-                args: [.port, .literal("--keys"), .literal("token2"), .literal("--yes-burn")],
+                args: [.port, .literal("--keys"), .literal("token2,thetis"), .literal("--yes-burn")],
                 mode: .terminal,
                 terminalHint: "espefuse will ask you to type BURN to confirm the digest + enable burns."
             ),
@@ -307,11 +315,11 @@ public enum ShowcaseCatalog {
             ShowcaseStep(
                 id: "ota.update",
                 title: "One-pass OTA update",
-                rationale: "Builds + signs the app and streams it to the running device — into the inactive slot, verified before activation. The only firmware-change path on a sealed board.",
+                rationale: "Builds + signs the app and streams it to the running device — into the inactive slot, verified before activation. Signs with both keys by default so either token can OTA-recover it. The only firmware-change path on a sealed board.",
                 script: "ota-update.sh",
                 args: [.host],
                 mode: .terminal,
-                terminalHint: "Enter the Token2 PIN once (to sign the build); delivery is automatic."
+                terminalHint: "Two-key sign: insert the Token2 (PIN), then swap to the Thetis (PIN); delivery is automatic."
             ),
             ShowcaseStep(
                 id: "ota.push",

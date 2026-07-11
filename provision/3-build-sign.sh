@@ -9,7 +9,7 @@
 #
 #   --ssid/--pass       Wi-Fi creds baked into the app
 #   --supervisor <k>    P-256 supervisor pubkey: 66-hex, PEM file, or inline PEM
-#   --keys <a,b>        enrolled key names, first = primary, rest appended  (default: token2)
+#   --keys <a,b>        enrolled key names, first = primary, rest appended  (default: token2,thetis)
 #   --outdir <dir>      where signed images land            (default: secure-boot/out)
 #   --features <list>   cargo features (default: udp-transport,efuse-hmac-identity)
 #   --secure-version <n> anti-rollback version stamped into the app descriptor before signing
@@ -20,7 +20,7 @@
 #                       valid image for a custom HSM sign — e.g. a single backup-key signature)
 source "$(dirname "$0")/lib.sh"
 
-SSID="" PASS="" SUP="" KEYS="token2" OUTDIR="$SB/out" FEATURES="udp-transport,efuse-hmac-identity" SKIPBL=0 SECVER="" BUILDONLY=0
+SSID="" PASS="" SUP="" KEYS="token2,thetis" OUTDIR="$SB/out" FEATURES="udp-transport,efuse-hmac-identity" SKIPBL=0 SECVER="" BUILDONLY=0
 while [ $# -gt 0 ]; do case "$1" in
   --ssid) SSID="$2"; shift 2;; --pass) PASS="$2"; shift 2;; --supervisor) SUP="$2"; shift 2;;
   --keys) KEYS="$2"; shift 2;; --outdir) OUTDIR="$2"; shift 2;; --features) FEATURES="$2"; shift 2;;

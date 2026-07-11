@@ -13,7 +13,7 @@
 #   --yes-burn       actually burn SECURE_BOOT_DIGEST* + SECURE_BOOT_EN (permanent)
 source "$(dirname "$0")/lib.sh"
 
-PORT="" KEYS="token2" INDIR="$SB/out" BURN=0
+PORT="" KEYS="token2,thetis" INDIR="$SB/out" BURN=0
 while [ $# -gt 0 ]; do case "$1" in
   --port) PORT="$2"; shift 2;; --keys) KEYS="$2"; shift 2;;
   --indir) INDIR="$2"; shift 2;; --yes-burn) BURN=1; shift;;

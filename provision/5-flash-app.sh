@@ -9,12 +9,12 @@
 #   --ssid/--pass       Wi-Fi creds baked into the app
 #   --supervisor <k>    P-256 supervisor pubkey: 66-hex, PEM file, or inline PEM
 #   --port <dev>        board serial port
-#   --keys <a,b>        signing key(s), first = primary  (default: token2)
+#   --keys <a,b>        signing key(s), first = primary  (default: token2,thetis)
 #   --features <list>   cargo features (default: udp-transport,efuse-hmac-identity)
 #   --app-offset <hex>  app slot (default: 0x20000)
 source "$(dirname "$0")/lib.sh"
 
-SSID="" PASS="" SUP="" PORT="" KEYS="token2" FEATURES="udp-transport,efuse-hmac-identity" OFF="$APP_OFFSET_DEFAULT"
+SSID="" PASS="" SUP="" PORT="" KEYS="token2,thetis" FEATURES="udp-transport,efuse-hmac-identity" OFF="$APP_OFFSET_DEFAULT"
 while [ $# -gt 0 ]; do case "$1" in
   --ssid) SSID="$2"; shift 2;; --pass) PASS="$2"; shift 2;; --supervisor) SUP="$2"; shift 2;;
   --port) PORT="$2"; shift 2;; --keys) KEYS="$2"; shift 2;;
