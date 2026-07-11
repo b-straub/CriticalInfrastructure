@@ -14,27 +14,44 @@ struct ContentView: View {
             content
                 .navigationTitle(title)
                 .toolbar {
+                    if model.showShowcase || model.showConfig {
+                        ToolbarItem(placement: .navigation) {
+                            Button {
+                                model.showShowcase = false
+                                model.showConfig = false
+                            } label: {
+                                Label("Home", systemImage: "house")
+                            }
+                            .help("Back to dashboard")
+                        }
+                    }
                     if model.activeRole != nil || model.hardwareMode {
-                        Button {
-                            model.switchIdentity()
-                        } label: {
-                            Label("Switch", systemImage: "arrow.left.arrow.right")
+                        ToolbarItem {
+                            Button {
+                                model.switchIdentity()
+                            } label: {
+                                Label("Switch", systemImage: "arrow.left.arrow.right")
+                            }
                         }
                     }
                     #if os(macOS)
-                    Button {
-                        model.showShowcase.toggle()
-                        if model.showShowcase { model.showConfig = false }
-                    } label: {
-                        Image(systemName: "wrench.and.screwdriver")
+                    ToolbarItem {
+                        Button {
+                            model.showShowcase.toggle()
+                            if model.showShowcase { model.showConfig = false }
+                        } label: {
+                            Image(systemName: "wrench.and.screwdriver")
+                        }
+                        .help("Provisioning & security showcase")
                     }
-                    .help("Provisioning & security showcase")
                     #endif
-                    Button {
-                        model.showConfig.toggle()
-                        if model.showConfig { model.showShowcase = false }
-                    } label: {
-                        Image(systemName: "gearshape")
+                    ToolbarItem {
+                        Button {
+                            model.showConfig.toggle()
+                            if model.showConfig { model.showShowcase = false }
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
                     }
                 }
         }
