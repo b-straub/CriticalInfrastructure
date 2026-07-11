@@ -5,24 +5,30 @@
 esp_bootloader_esp_idf::esp_app_desc!();
 
 use embassy_executor::Spawner;
+#[cfg(feature = "udp-transport")]
 use embassy_net::{Config as NetConfig, StackResources};
+#[cfg(feature = "udp-transport")]
 use embassy_time::{Duration, Timer};
 use esp_alloc as _;
 use esp_backtrace as _;
-use esp_hal::{
-    rng::Rng,
-    spi::{
-        master::{Config as SpiConfig, Spi},
-        Mode,
-    },
-    timer::timg::TimerGroup,
+use esp_hal::{rng::Rng, timer::timg::TimerGroup};
+#[cfg(feature = "udp-transport")]
+use esp_hal::spi::{
+    master::{Config as SpiConfig, Spi},
+    Mode,
 };
 use log::info;
+#[cfg(feature = "udp-transport")]
 use smart_leds::{colors, SmartLedsWrite};
+#[cfg(feature = "udp-transport")]
 use ws2812_spi::Ws2812;
+#[cfg(feature = "udp-transport")]
 use static_cell::StaticCell;
+#[cfg(feature = "udp-transport")]
 use shared::terminology::*;
 
+#[cfg(feature = "ble-transport")]
+mod ble;
 #[cfg(feature = "ota-net")]
 mod bootsig;
 mod clientauth;
@@ -32,14 +38,19 @@ mod identity;
 mod net;
 mod ota;
 mod protocol;
+#[cfg(feature = "udp-transport")]
 mod sensor;
 mod state;
 mod storage;
+#[cfg(feature = "udp-transport")]
 use crate::state::*;
 
-// The device speaks the native UDP transport (see Cargo.toml / UDP-TRANSPORT.md).
-#[cfg(not(feature = "udp-transport"))]
-compile_error!("enable the `udp-transport` feature");
+// Exactly one transport (see Cargo.toml / UDP-TRANSPORT.md): `udp-transport` (Wi-Fi datagrams,
+// default) or `ble-transport` (BLE GATT, same envelope, no Wi-Fi).
+#[cfg(not(any(feature = "udp-transport", feature = "ble-transport")))]
+compile_error!("enable a transport: `udp-transport` or `ble-transport`");
+#[cfg(all(feature = "udp-transport", feature = "ble-transport"))]
+compile_error!("enable exactly ONE transport, not both");
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -80,9 +91,19 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "efuse-hmac-identity"))]
     let (esp_x25519_secret, esp_signing_key) = identity::derive_identity(&mut rng);
 
-    // We can still pass rng to esp_wifi because we didn't consume it
+    // We can still pass rng to esp_wifi because we didn't consume it (Rng is Copy)
     let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
 
+    // ---- BLE transport: run the GATT server; Wi-Fi is never brought up ----
+    #[cfg(feature = "ble-transport")]
+    {
+        let _ = &spawner; // spawner is only used by the UDP transport block below
+        ble::run(init, peripherals.BT, esp_x25519_secret, esp_signing_key, rng).await;
+    }
+
+    // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
+    #[cfg(feature = "udp-transport")]
+    {
     let (mut _controller, interfaces) =
         esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
     let wifi_interface = interfaces.sta;
@@ -331,4 +352,5 @@ async fn main(spawner: Spawner) {
             }
         }
     }
+    } // end #[cfg(feature = "udp-transport")] block
 }

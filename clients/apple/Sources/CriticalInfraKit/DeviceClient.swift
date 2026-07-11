@@ -9,13 +9,23 @@ import Foundation
 /// "Replay Attack Detected"; that's rare on a LAN and still authenticated.
 public actor DeviceClient {
     public let config: DeviceConfig
-    private let transport: UdpTransport
+    private let transport: any DeviceTransport
     private let signer: CommandSigner
 
     public init(config: DeviceConfig, signer: CommandSigner) {
         self.config = config
-        self.transport = UdpTransport(host: config.host, port: config.port)
+        self.transport = DeviceClient.makeTransport(for: config)
         self.signer = signer
+    }
+
+    /// Pick the transport from the config. BLE is macOS/iOS CoreBluetooth; UDP is the default.
+    private static func makeTransport(for config: DeviceConfig) -> any DeviceTransport {
+        switch config.transport {
+        case .ble:
+            return BleTransport(config: config)
+        case .udp:
+            return UdpTransport(host: config.host, port: config.port)
+        }
     }
 
     private static let maxAttempts = 2

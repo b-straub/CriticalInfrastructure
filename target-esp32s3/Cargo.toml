@@ -10,6 +10,11 @@ edition = "2021"
 default = ["udp-transport"]
 udp-transport = ["dep:p256"]
 
+# BLE transport (spike): the device runs a BLE GATT server instead of Wi-Fi/UDP, carrying the
+# SAME command envelope. Mutually exclusive with udp-transport. Client auth is still P-256.
+# See docs/formal/UDP-TRANSPORT.md (transport-independent envelope). BLE-only — no Wi-Fi coex.
+ble-transport = ["esp-wifi/ble", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync", "dep:p256"]
+
 # Derive the device identity from a read-protected eFuse HMAC key via the
 # hardware HMAC-SHA256 peripheral (the key never leaves hardware). Requires the
 # eFuse key to be provisioned; OFF by default so dev builds keep the RNG/flash
@@ -39,6 +44,14 @@ p256 = { version = "0.13", default-features = false, features = ["ecdsa"], optio
 # time. Optional: only the ota-net build enables it. no_std + alloc, verify-only (no RNG).
 # Brings its own sha2 0.10 / digest generation; accepted for verify-before-activate (see [features]).
 rsa = { version = "0.9", default-features = false, features = ["sha2"], optional = true }
+# BLE host stack + HCI types (ble-transport). PINNED: esp-wifi 0.15.1's BleConnector implements
+# bt_hci::Transport at bt-hci 0.3.x, and only trouble-host 0.2.4 links against that (0.3+ needs
+# bt-hci 0.5 / the esp-radio migration). Do NOT `cargo update` these two past these versions.
+trouble-host = { version = "=0.2.4", optional = true }
+bt-hci = { version = "=0.3.2", optional = true }
+# The trouble gatt_server/gatt_service macros expand to `embassy_sync::...` in this crate's
+# scope; must match the version trouble-host 0.2.4 uses (0.7, same as embassy-net/executor here).
+embassy-sync = { version = "0.7", optional = true }
 postcard = "1.0"
 
 esp-backtrace = { version = "0.15.0", features = ["esp32s3", "panic-handler", "println"] }

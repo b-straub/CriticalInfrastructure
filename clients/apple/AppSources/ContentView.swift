@@ -93,8 +93,18 @@ private struct ConfigForm: View {
     var body: some View {
         Form {
             Section("Device") {
-                TextField("Device IP", text: $model.config.host)
-                    .autocorrectionDisabled()
+                Picker("Transport", selection: $model.config.transport) {
+                    Text("Wi-Fi (UDP)").tag(TransportKind.udp)
+                    Text("Bluetooth (BLE)").tag(TransportKind.ble)
+                }
+                switch model.config.transport {
+                case .udp:
+                    TextField("Device IP", text: $model.config.host)
+                        .autocorrectionDisabled()
+                case .ble:
+                    TextField("Device name", text: $model.config.bleName)
+                        .autocorrectionDisabled()
+                }
                 TextField("X25519 (ROM) key", text: $model.config.espX25519PubHex)
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
