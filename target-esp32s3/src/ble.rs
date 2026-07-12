@@ -68,6 +68,7 @@ pub async fn run(
     if let Some(t) = crate::storage::load_threshold() {
         unsafe { crate::state::THRESHOLD = t };
     }
+    info!("BLE step 1: state loaded -> init LCD");
 
     // LCD (same PCF8574 backpack @0x27 as the UDP path). BLE mode has no IP, so line 1 shows the
     // BLE connection state instead. Same robust reset as main.rs (warm-flash desync workaround).
@@ -86,20 +87,26 @@ pub async fn run(
     delay.delay_millis(5);
     let mut sender = I2cSender::new(&mut lcd_i2c, 0x27);
     let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
+    info!("BLE step 2: LCD ready -> BleConnector::new");
 
     let connector = BleConnector::new(init, bt);
+    info!("BLE step 3: connector -> ExternalController::new");
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
+    info!("BLE step 4: controller -> HostResources::new");
 
     let mut resources: HostResources<DefaultPacketPool, 1, 2> = HostResources::new();
+    info!("BLE step 5: resources -> trouble_host::new + stack.build");
     let stack = trouble_host::new(controller, &mut resources)
         .set_random_address(Address::random([0xff, 0x11, 0x22, 0x33, 0x44, 0x55]));
     let Host { mut peripheral, runner, .. } = stack.build();
+    info!("BLE step 6: stack built -> Server::new_with_config");
 
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
         name: "CriticalInfra",
         appearance: &appearance::UNKNOWN,
     }))
     .unwrap();
+    info!("BLE step 7: GATT server ready -> join(run_host, app)");
 
     let app = async {
         use core::fmt::Write as _;
@@ -111,9 +118,11 @@ pub async fn run(
         }
         lcd.set_cursor_pos((0, 1));
         lcd.write_str_to_cur(&l2);
+        info!("BLE app: LCD tag written -> advertise loop");
         loop {
             lcd.set_cursor_pos((0, 0));
             lcd.write_str_to_cur("BLE advertising "); // 16 chars — clears the whole line
+            info!("BLE app: advertising...");
             match advertise(&mut peripheral, &server).await {
                 Ok(conn) => {
                     lcd.set_cursor_pos((0, 0));
@@ -129,6 +138,7 @@ pub async fn run(
 }
 
 async fn run_host<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
+    info!("BLE host: runner.run() starting");
     if let Err(e) = runner.run().await {
         info!("BLE host runner exited: {:?}", e);
     }
