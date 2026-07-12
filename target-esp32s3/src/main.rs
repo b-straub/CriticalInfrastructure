@@ -93,7 +93,7 @@ async fn main(spawner: Spawner) {
     // We can still pass rng to esp_wifi because we didn't consume it (Rng is Copy)
     let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
 
-    // ---- Transport select (hybrid): a physical switch on GPIO10 picks the radio at boot ----
+    // ---- Transport select (hybrid): a physical switch on GPIO14 picks the radio at boot ----
     // Wired to GND → BLE; open (internal pull-up) → UDP/Wi-Fi. Only one radio comes up (no coex),
     // so it's robust and deploys to a sealed board via OTA (default UDP keeps working). In a
     // BLE-only build (no udp-transport) there is no fallback, so BLE always runs.
@@ -103,9 +103,9 @@ async fn main(spawner: Spawner) {
         #[cfg(feature = "udp-transport")]
         let select_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            let sw = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
+            let sw = Input::new(peripherals.GPIO14, InputConfig::default().with_pull(Pull::Up));
             let ble = sw.is_low();
-            info!("Transport switch (GPIO10): {}", if ble { "BLE" } else { "UDP/Wi-Fi" });
+            info!("Transport switch (GPIO14): {}", if ble { "BLE" } else { "UDP/Wi-Fi" });
             ble
         };
         #[cfg(not(feature = "udp-transport"))]

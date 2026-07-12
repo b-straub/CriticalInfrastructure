@@ -1,7 +1,7 @@
 //! BLE GATT transport — carries the SAME command envelope as the UDP path over a Bluetooth LE
 //! GATT link, so the device is controllable without Wi-Fi/LAN (commissioning, network-down, iOS
 //! without a network). In a hybrid build (both `udp-transport` + `ble-transport`) a physical
-//! switch on GPIO10 selects this path over UDP at boot; only one radio runs at a time (no coex),
+//! switch on GPIO14 selects this path over UDP at boot; only one radio runs at a time (no coex),
 //! which keeps it robust and lets a hybrid image deploy to a sealed board via OTA.
 //!
 //! The security boundary is the app-layer envelope (X25519 + AES-GCM + P-256/Ed25519), so the

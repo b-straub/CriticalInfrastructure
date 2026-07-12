@@ -38,7 +38,7 @@ The migration replaced one transport with another (same crates, same envelope):
 **BLE second path (hybrid, switch-selected).** The `ble-transport` cargo feature adds a BLE GATT
 server that carries the **same** envelope (a `rx` write + `tx` notify characteristic, chunked
 `[total][seq][payload]`, into the unchanged `process_envelope`). A build with both `udp-transport`
-+ `ble-transport` is a **hybrid**: a **physical slide switch on GPIO10** picks the radio at boot —
++ `ble-transport` is a **hybrid**: a **physical slide switch on GPIO14** picks the radio at boot —
 grounded → BLE, open → UDP (internal pull-up). Only one radio runs at a time (no Wi-Fi/BLE coex),
 so it stays robust, and a hybrid image still deploys to a sealed board over OTA (UDP keeps
 working). The Swift client picks the matching transport in Settings (Transport: Wi-Fi / Bluetooth);
