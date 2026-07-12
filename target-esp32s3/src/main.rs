@@ -125,26 +125,30 @@ async fn main(spawner: Spawner) {
                 };
             }
             let pins = [
-                (0u8, mk!(GPIO0)), (1, mk!(GPIO1)), (2, mk!(GPIO2)), (5, mk!(GPIO5)),
-                (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)), (11, mk!(GPIO11)),
-                (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)), (15, mk!(GPIO15)),
-                (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)), (38, mk!(GPIO38)),
-                (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)), (42, mk!(GPIO42)),
-                (47, mk!(GPIO47)), (48, mk!(GPIO48)),
+                (0u8, mk!(GPIO0)), (1, mk!(GPIO1)), (2, mk!(GPIO2)), (3, mk!(GPIO3)),
+                (5, mk!(GPIO5)), (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)),
+                (11, mk!(GPIO11)), (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)),
+                (15, mk!(GPIO15)), (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)),
+                (38, mk!(GPIO38)), (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)),
+                (42, mk!(GPIO42)), (45, mk!(GPIO45)), (46, mk!(GPIO46)), (47, mk!(GPIO47)),
+                (48, mk!(GPIO48)),
             ];
-            // Print ONE summary line (not 22) so nothing scrolls off: just the grounded pin(s).
-            let mut low = heapless::String::<64>::new();
-            for (n, p) in pins.iter() {
-                if p.is_low() {
-                    use core::fmt::Write as _;
-                    let _ = write!(&mut low, "GPIO{} ", n);
+            // LIVE finder (~45s): touch your GND wire to pads; the moment a real GPIO is grounded its
+            // number prints LOW (and prints again when released). Drag across pads to find a usable
+            // one. If nothing EVER prints while you probe, the GND wire/rail itself isn't grounding.
+            let mut prev = [false; 32]; // was-low per pin
+            info!("LIVE PROBE ~45s: drag your GND wire across pads — grounded GPIOs print here:");
+            for _ in 0..450u32 {
+                for (i, (n, p)) in pins.iter().enumerate() {
+                    let lo = p.is_low();
+                    if lo != prev[i] {
+                        info!("PROBE: GPIO{} = {}", n, if lo { "LOW (grounded — usable pad!)" } else { "HIGH (released)" });
+                        prev[i] = lo;
+                    }
                 }
+                Timer::after(Duration::from_millis(100)).await;
             }
-            if low.is_empty() {
-                info!("PINDUMP: NO pin reads LOW — the GND wire isn't contacting any scanned pad.");
-            } else {
-                info!("PINDUMP: GROUNDED PAD = {}(this is the chip pin your wire is on)", low);
-            }
+            info!("LIVE PROBE ended — booting UDP (reachable).");
             false // always UDP during diagnosis
         };
         #[cfg(not(feature = "udp-transport"))]
