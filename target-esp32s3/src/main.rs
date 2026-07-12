@@ -136,14 +136,32 @@ async fn main(spawner: Spawner) {
             // LIVE finder (~45s): touch your GND wire to pads; the moment a real GPIO is grounded its
             // number prints LOW (and prints again when released). Drag across pads to find a usable
             // one. If nothing EVER prints while you probe, the GND wire/rail itself isn't grounding.
-            let mut prev = [false; 32]; // was-low per pin
-            info!("LIVE PROBE ~45s: drag your GND wire across pads — grounded GPIOs print here:");
-            for _ in 0..450u32 {
+            // Pure LEVEL polling (no interrupts/edges): re-read every pin 10x/s, and every 2s print
+            // the set of pins that are LOW *right now*. A static GND wire makes its pin stay in the
+            // "LOW now" list continuously — proving it's a level read, not a press/flank. If "LOW now"
+            // stays "(none)" while your wire is on a pad, that wire's GND end isn't real ground.
+            use core::fmt::Write as _;
+            let mut prev = [false; 32];
+            info!("LIVE PROBE ~60s: level of every free pin, polled. Wire GND to a pad; it stays LOW while connected.");
+            for t in 0..600u32 {
                 for (i, (n, p)) in pins.iter().enumerate() {
                     let lo = p.is_low();
                     if lo != prev[i] {
-                        info!("PROBE: GPIO{} = {}", n, if lo { "LOW (grounded — usable pad!)" } else { "HIGH (released)" });
+                        info!("PROBE change: GPIO{} -> {}", n, if lo { "LOW" } else { "HIGH" });
                         prev[i] = lo;
+                    }
+                }
+                if t % 20 == 0 {
+                    let mut low = heapless::String::<96>::new();
+                    for (n, p) in pins.iter() {
+                        if p.is_low() {
+                            let _ = write!(&mut low, "GPIO{} ", n);
+                        }
+                    }
+                    if low.is_empty() {
+                        info!("PROBE level @{}s: LOW now = (none grounded)", t / 10);
+                    } else {
+                        info!("PROBE level @{}s: LOW now = {}", t / 10, low);
                     }
                 }
                 Timer::after(Duration::from_millis(100)).await;
