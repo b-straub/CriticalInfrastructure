@@ -83,13 +83,21 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
 
-    // Wi-Fi-only was tuned to 72 KB. A ble-transport build keeps esp-wifi's Wi-Fi static buffers
-    // AND the BLE controller/host (trouble-host HostResources + DefaultPacketPool) resident, so it
-    // needs a bigger heap or the BLE stack OOMs right after Wi-Fi init. UDP-only keeps 72 KB.
-    #[cfg(feature = "ble-transport")]
-    esp_alloc::heap_allocator!(size: 160 * 1024);
-    #[cfg(not(feature = "ble-transport"))]
-    esp_alloc::heap_allocator!(size: 72 * 1024);
+    // Give all remaining SRAM to the heap. Coexistence (Wi-Fi + BLE) requires more
+    // memory than fits in the contiguous .bss section used by the static macro.
+    extern "C" {
+        static mut _heap_start: u32;
+        static mut _heap_end: u32;
+    }
+    unsafe {
+        let heap_start = core::ptr::addr_of!(_heap_start) as usize;
+        let heap_end = core::ptr::addr_of!(_heap_end) as usize;
+        esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+            heap_start as *mut u8,
+            heap_end - heap_start,
+            esp_alloc::MemoryCapability::Internal.into(),
+        ));
+    }
 
     let timg1 = TimerGroup::new(peripherals.TIMG1);
     let mut rng = Rng::new(peripherals.RNG);
