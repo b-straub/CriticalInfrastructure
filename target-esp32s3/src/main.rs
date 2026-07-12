@@ -103,29 +103,38 @@ async fn main(spawner: Spawner) {
         #[cfg(feature = "udp-transport")]
         let select_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            // DIAGNOSTIC scan (LOG-ONLY): pull up a set of free GPIOs and report any that read
-            // LOW. Ground your switch pad, reset, and the "SCAN: GPIOxx is LOW" line names the
-            // actual chip GPIO for that physical pad — ending the silkscreen-label guesswork.
-            // This build ALWAYS boots UDP (never auto-selects BLE) so the device stays reachable
-            // and OTA-able no matter what the pins read. Once the pad's real GPIO is known, revert
-            // this to a single-pin read that drives `select_ble`.
-            let mut any_low = false;
-            macro_rules! scan {
-                ($($g:ident),*) => {$(
-                    {
-                        let p = Input::new(peripherals.$g, InputConfig::default().with_pull(Pull::Up));
-                        if p.is_low() {
-                            info!("SCAN: {} is LOW (grounded)", stringify!($g));
-                            any_low = true;
-                        }
+            // INTERACTIVE LIVE SCAN (~45s): hold a wide set of broken-out free GPIOs with internal
+            // pull-ups and poll them continuously, logging every level CHANGE. Flip your switch (or
+            // touch a GND jumper to a pad) and watch serial track it LIVE — "GPIOxx -> LOW"/"-> HIGH"
+            // names the pad in real time, so the once-at-boot timing can't hide it. After the window
+            // it ALWAYS boots UDP (stays reachable/OTA-able). Revert to a single GPIO read once the
+            // pad is confirmed.
+            macro_rules! mk {
+                ($id:ident) => {
+                    Input::new(peripherals.$id, InputConfig::default().with_pull(Pull::Up))
+                };
+            }
+            let pins = [
+                (1u8, mk!(GPIO1)), (2, mk!(GPIO2)), (3, mk!(GPIO3)), (5, mk!(GPIO5)),
+                (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)), (11, mk!(GPIO11)),
+                (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)), (15, mk!(GPIO15)),
+                (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)), (38, mk!(GPIO38)),
+                (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)), (42, mk!(GPIO42)),
+                (47, mk!(GPIO47)), (48, mk!(GPIO48)),
+            ];
+            let mut prev = [false; 32]; // is_low state per pin (>= pins.len()); pull-ups => start high
+            info!("LIVE SCAN: flip your switch / touch GND to a pad now (~45s). Level changes below:");
+            for _ in 0..150u32 {
+                for (i, (g, p)) in pins.iter().enumerate() {
+                    let low = p.is_low();
+                    if low != prev[i] {
+                        info!("LIVE: GPIO{} -> {}", g, if low { "LOW (grounded)" } else { "HIGH" });
+                        prev[i] = low;
                     }
-                )*};
+                }
+                Timer::after(Duration::from_millis(300)).await;
             }
-            scan!(GPIO1, GPIO2, GPIO5, GPIO6, GPIO7, GPIO10, GPIO11, GPIO12, GPIO13, GPIO14, GPIO15, GPIO16, GPIO17, GPIO18);
-            if !any_low {
-                info!("SCAN: no scanned pin is grounded");
-            }
-            info!("Transport: UDP/Wi-Fi (diagnostic build always boots UDP)");
+            info!("Transport: UDP/Wi-Fi (live-scan window ended; always boots UDP)");
             false // always UDP — safe, stays reachable
         };
         #[cfg(not(feature = "udp-transport"))]
