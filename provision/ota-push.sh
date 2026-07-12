@@ -41,6 +41,10 @@ while True:
             sys.stderr.write(f"could not connect to {host}:{port} within 45s ({e})\n")
             sys.exit(2)
         time.sleep(2)
+# create_connection leaves the 5s connect timeout ON the socket; the device throttles the stream
+# (it writes each sector to encrypted flash before reading more), so a 5s send timeout aborts the
+# 1.1 MB transfer mid-way. Give the transfer a generous timeout before sending.
+s.settimeout(90)
 s.sendall(struct.pack('<I', len(data)))   # u32 LE length prefix
 s.sendall(data)
 # In-band verdict (ota.rs:295-313): on ACCEPT the device activates the slot and resets, so the
