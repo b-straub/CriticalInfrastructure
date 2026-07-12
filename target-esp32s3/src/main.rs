@@ -132,15 +132,19 @@ async fn main(spawner: Spawner) {
                 (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)), (42, mk!(GPIO42)),
                 (47, mk!(GPIO47)), (48, mk!(GPIO48)),
             ];
-            info!("PINDUMP: every free pin idles HIGH (internal pull-up); your grounded pad reads LOW:");
+            // Print ONE summary line (not 22) so nothing scrolls off: just the grounded pin(s).
+            let mut low = heapless::String::<64>::new();
             for (n, p) in pins.iter() {
-                info!(
-                    "PINDUMP: GPIO{} = {}",
-                    n,
-                    if p.is_low() { "LOW  <== GROUNDED (this is your pad)" } else { "HIGH" }
-                );
+                if p.is_low() {
+                    use core::fmt::Write as _;
+                    let _ = write!(&mut low, "GPIO{} ", n);
+                }
             }
-            info!("PINDUMP done — booting UDP (reachable). Report which GPIO printed LOW.");
+            if low.is_empty() {
+                info!("PINDUMP: NO pin reads LOW — the GND wire isn't contacting any scanned pad.");
+            } else {
+                info!("PINDUMP: GROUNDED PAD = {}(this is the chip pin your wire is on)", low);
+            }
             false // always UDP during diagnosis
         };
         #[cfg(not(feature = "udp-transport"))]
