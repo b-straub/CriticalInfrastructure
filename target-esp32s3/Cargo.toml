@@ -67,7 +67,7 @@ esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32s3"] }
 ws2812-spi = "0.5.1"
 # `wifi`/`ble` are enabled by the udp-transport / ble-transport features, not hardcoded, so a
 # BLE-only build doesn't drag in the Wi-Fi controller. See [features].
-esp-wifi = { version = "0.15.1", features = ["esp32s3", "log-04"] }
+esp-wifi = { version = "0.15.1", features = ["coex", "esp32s3", "log-04"] }
 esp-alloc = { version = "0.8.0" }
 embassy-executor = { version = "0.7.0", features = ["executor-thread", "task-arena-size-32768"] }
 embassy-time = "0.5.1"

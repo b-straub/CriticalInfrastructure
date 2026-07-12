@@ -47,15 +47,13 @@ struct ControlService {
 
 /// Never returns — runs the BLE host + GATT server forever. Also drives the LCD (line 1 = BLE
 /// status since there is no IP in BLE mode; line 2 = firmware build tag).
-pub async fn run(
+#[embassy_executor::task]
+pub async fn ble_task(
     init: &'static EspWifiController<'static>,
     bt: esp_hal::peripherals::BT<'static>,
     esp_x25519_secret: StaticSecret,
     esp_signing_key: SigningKey,
     mut rng: Rng,
-    _i2c0: esp_hal::peripherals::I2C0<'static>,
-    _sda: esp_hal::peripherals::GPIO8<'static>,
-    _scl: esp_hal::peripherals::GPIO9<'static>,
 ) -> ! {
     // MINIMAL reference test: strip everything the trouble-host v0.2.4 example does NOT do — no LCD,
     // no I2C, no flash reads, no blocking delays between esp_wifi::init and BleConnector::new. If
