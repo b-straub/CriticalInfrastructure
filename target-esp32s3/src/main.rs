@@ -111,44 +111,37 @@ async fn main(spawner: Spawner) {
         #[cfg(feature = "udp-transport")]
         let select_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            // TEMPORARY read-proof diagnostic (~15s). Both inputs read the SAME way the working DHT11
-            // does (external/internal pull-up, line idles HIGH, pulled to GND = LOW — Flex::level):
-            //   * GPIO0  = onboard BOOT button — hardwired on the module (external pull-up, button to
-            //     GND), NO breadboard wiring. Pressing BOOT MUST print "BOOT=LOW". That alone proves
-            //     the boot-time read path works.
-            //   * GPIO10 = transport-select pad, internal PULL-UP so it idles HIGH. Touching it to
-            //     GND MUST print "GPIO10=LOW" — proving the pad is chip-GPIO10 and reads in the
-            //     proven direction. (Earlier 3V3 -> LOW just meant the 3V3 leg never connected.)
-            // Final direction is active-LOW: pull-up idle HIGH = UDP (OTA-safe default); switch to
-            // GND = LOW = BLE. No 3.3V routed to the pin. Revert this debug commit once confirmed.
-            let boot = Input::new(peripherals.GPIO0, InputConfig::default()); // module already pulls GPIO0 up
-            let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
-            let (mut pb, mut ps) = (boot.is_high(), sel.is_high());
-            info!(
-                "DIAG ~15s: press BOOT (proves the read); touch GPIO10 to GND (proves the pad). Start: BOOT={} GPIO10={}",
-                if pb { "HIGH" } else { "LOW" },
-                if ps { "HIGH" } else { "LOW" }
-            );
-            for _ in 0..150u32 {
-                let (b, s) = (boot.is_high(), sel.is_high());
-                if b != pb || s != ps {
-                    info!(
-                        "DIAG: BOOT(GPIO0)={} GPIO10={}",
-                        if b { "HIGH" } else { "LOW (pressed)" },
-                        if s { "HIGH" } else { "LOW (grounded)" }
-                    );
-                    pb = b;
-                    ps = s;
-                }
-                Timer::after(Duration::from_millis(100)).await;
+            // TEMPORARY full-pin dump — the read path is already proven (the onboard BOOT button on
+            // GPIO0 flips HIGH->LOW through this same code). Every free GPIO gets an internal pull-up
+            // so it idles HIGH; whichever pin your hard-wired GND pad is physically on prints LOW.
+            // Keep your GND wire on the pad, reset ONCE, read the list — no labels, no timing:
+            //   * GPIO10 = LOW  -> you were right, the pad is chip-GPIO10 and I hunt a GPIO10 quirk.
+            //   * some OTHER GPIO = LOW -> that is your pad's real chip pin; we point the switch there.
+            //   * nothing LOW -> the GND wire isn't actually contacting the pad (jumper/board), not SW.
+            // Always boots UDP so the board stays reachable/OTA-able. Revert once the pad is known.
+            macro_rules! mk {
+                ($id:ident) => {
+                    Input::new(peripherals.$id, InputConfig::default().with_pull(Pull::Up))
+                };
             }
-            let ble = sel.is_low(); // active-low: GND = BLE, idle-HIGH = UDP
-            info!(
-                "Transport select: GPIO10 = {} -> {}",
-                if sel.is_low() { "LOW" } else { "HIGH" },
-                if ble { "BLE" } else { "UDP/Wi-Fi" }
-            );
-            ble
+            let pins = [
+                (0u8, mk!(GPIO0)), (1, mk!(GPIO1)), (2, mk!(GPIO2)), (5, mk!(GPIO5)),
+                (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)), (11, mk!(GPIO11)),
+                (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)), (15, mk!(GPIO15)),
+                (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)), (38, mk!(GPIO38)),
+                (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)), (42, mk!(GPIO42)),
+                (47, mk!(GPIO47)), (48, mk!(GPIO48)),
+            ];
+            info!("PINDUMP: every free pin idles HIGH (internal pull-up); your grounded pad reads LOW:");
+            for (n, p) in pins.iter() {
+                info!(
+                    "PINDUMP: GPIO{} = {}",
+                    n,
+                    if p.is_low() { "LOW  <== GROUNDED (this is your pad)" } else { "HIGH" }
+                );
+            }
+            info!("PINDUMP done — booting UDP (reachable). Report which GPIO printed LOW.");
+            false // always UDP during diagnosis
         };
         #[cfg(not(feature = "udp-transport"))]
         let select_ble = true;
