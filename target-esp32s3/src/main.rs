@@ -103,9 +103,24 @@ async fn main(spawner: Spawner) {
         #[cfg(feature = "udp-transport")]
         let select_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            let sw = Input::new(peripherals.GPIO14, InputConfig::default().with_pull(Pull::Up));
-            let ble = sw.is_low();
-            info!("Transport switch (GPIO14): {}", if ble { "BLE" } else { "UDP/Wi-Fi" });
+            // DIAGNOSTIC scan: pull up a set of free GPIOs and report any that read LOW. Ground
+            // your switch pad, reset, and the "SCAN: GPIOxx is LOW" line names the actual chip
+            // GPIO for that physical pad — ending the silkscreen-label guesswork. Grounding ANY
+            // scanned pin also selects BLE. (Revert to a single pin once the pad is confirmed.)
+            let mut ble = false;
+            macro_rules! scan {
+                ($($g:ident),*) => {$(
+                    {
+                        let p = Input::new(peripherals.$g, InputConfig::default().with_pull(Pull::Up));
+                        if p.is_low() {
+                            info!("SCAN: {} is LOW (grounded) -> selecting BLE", stringify!($g));
+                            ble = true;
+                        }
+                    }
+                )*};
+            }
+            scan!(GPIO1, GPIO2, GPIO5, GPIO6, GPIO7, GPIO10, GPIO11, GPIO12, GPIO13, GPIO14, GPIO15, GPIO16, GPIO17, GPIO18);
+            info!("Transport: {}", if ble { "BLE (a pin was grounded)" } else { "UDP/Wi-Fi (no pin grounded)" });
             ble
         };
         #[cfg(not(feature = "udp-transport"))]
