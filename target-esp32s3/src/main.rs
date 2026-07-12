@@ -83,18 +83,21 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
 
-    // Give all remaining SRAM to the heap. Coexistence (Wi-Fi + BLE) requires more
-    // memory than fits in the contiguous .bss section used by the static macro.
-    extern "C" {
-        static mut _heap_start: u32;
-        static mut _heap_end: u32;
-    }
+    // Coexistence (Wi-Fi + BLE) requires ~200KB heap, but the linker cannot fit a
+    // single 200KB contiguous block into the `.bss` segment due to fragmentation.
+    // By splitting it into two blocks, the linker can place them in available SRAM.
+    static mut HEAP1: core::mem::MaybeUninit<[u8; 128 * 1024]> = core::mem::MaybeUninit::uninit();
+    static mut HEAP2: core::mem::MaybeUninit<[u8; 72 * 1024]> = core::mem::MaybeUninit::uninit();
+
     unsafe {
-        let heap_start = core::ptr::addr_of!(_heap_start) as usize;
-        let heap_end = core::ptr::addr_of!(_heap_end) as usize;
         esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
-            heap_start as *mut u8,
-            heap_end - heap_start,
+            core::ptr::addr_of_mut!(HEAP1).cast::<u8>(),
+            128 * 1024,
+            esp_alloc::MemoryCapability::Internal.into(),
+        ));
+        esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+            core::ptr::addr_of_mut!(HEAP2).cast::<u8>(),
+            72 * 1024,
             esp_alloc::MemoryCapability::Internal.into(),
         ));
     }
