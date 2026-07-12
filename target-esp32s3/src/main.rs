@@ -87,7 +87,7 @@ async fn main(spawner: Spawner) {
     // AND the BLE controller/host (trouble-host HostResources + DefaultPacketPool) resident, so it
     // needs a bigger heap or the BLE stack OOMs right after Wi-Fi init. UDP-only keeps 72 KB.
     #[cfg(feature = "ble-transport")]
-    esp_alloc::heap_allocator!(size: 256 * 1024);
+    esp_alloc::heap_allocator!(size: 160 * 1024);
     #[cfg(not(feature = "ble-transport"))]
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
