@@ -66,7 +66,10 @@ async fn main(spawner: Spawner) {
         info!("WARNING: No SUPERVISOR_PUBKEY found at compile time! Crypto will default to zeros.");
     }
 
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+    // CpuClock::default() is only 80 MHz; esp-wifi's radio needs the full 240 MHz. Wi-Fi tolerates
+    // 80 MHz but the BLE/BT controller PHY bring-up hangs (esp-wifi-sys #409), so run at max.
+    let peripherals =
+        esp_hal::init(esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()));
 
     // OTA: which A/B slot we booted, from the MMU (a register read — correct under
     // flash encryption, no partition-table read).
