@@ -15,9 +15,12 @@
 use bt_hci::controller::ExternalController;
 use embassy_futures::join::join;
 use ed25519_dalek::SigningKey;
+use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::rng::Rng;
 use esp_wifi::ble::controller::BleConnector;
 use esp_wifi::EspWifiController;
+use lcd1602_driver::lcd::{Basic, Ext, Lcd};
+use lcd1602_driver::sender::I2cSender;
 use log::info;
 use trouble_host::prelude::*;
 use x25519_dalek::StaticSecret;
@@ -45,13 +48,17 @@ struct ControlService {
     tx: Frame,
 }
 
-/// Never returns — runs the BLE host + GATT server forever.
+/// Never returns — runs the BLE host + GATT server forever. Also drives the LCD (line 1 = BLE
+/// status since there is no IP in BLE mode; line 2 = firmware build tag).
 pub async fn run(
     init: &'static EspWifiController<'static>,
     bt: esp_hal::peripherals::BT<'static>,
     esp_x25519_secret: StaticSecret,
     esp_signing_key: SigningKey,
     mut rng: Rng,
+    i2c0: esp_hal::peripherals::I2C0<'static>,
+    sda: esp_hal::peripherals::GPIO8<'static>,
+    scl: esp_hal::peripherals::GPIO9<'static>,
 ) -> ! {
     // Persisted state (mirror main.rs) so role commands work over BLE too.
     if let Some(saved) = crate::storage::load_roles() {
@@ -61,6 +68,24 @@ pub async fn run(
     if let Some(t) = crate::storage::load_threshold() {
         unsafe { crate::state::THRESHOLD = t };
     }
+
+    // LCD (same PCF8574 backpack @0x27 as the UDP path). BLE mode has no IP, so line 1 shows the
+    // BLE connection state instead. Same robust reset as main.rs (warm-flash desync workaround).
+    let mut lcd_i2c = I2c::new(i2c0, I2cConfig::default())
+        .expect("I2C new failed")
+        .with_sda(sda)
+        .with_scl(scl);
+    let mut delay = esp_hal::delay::Delay::new();
+    delay.delay_millis(100);
+    for wait_us in [4500u32, 200, 200] {
+        let _ = lcd_i2c.write(0x27u8, &[0x3Cu8]);
+        delay.delay_micros(1);
+        let _ = lcd_i2c.write(0x27u8, &[0x38u8]);
+        delay.delay_micros(wait_us);
+    }
+    delay.delay_millis(5);
+    let mut sender = I2cSender::new(&mut lcd_i2c, 0x27);
+    let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
 
     let connector = BleConnector::new(init, bt);
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
@@ -77,9 +102,22 @@ pub async fn run(
     .unwrap();
 
     let app = async {
+        use core::fmt::Write as _;
+        // Line 2: firmware build tag (same as the UDP path's tag; stable across transports).
+        let mut l2 = heapless::String::<16>::new();
+        let _ = write!(&mut l2, "FW {}", env!("FW_SHORT"));
+        while l2.len() < 16 {
+            let _ = l2.push(' ');
+        }
+        lcd.set_cursor_pos((0, 1));
+        lcd.write_str_to_cur(&l2);
         loop {
+            lcd.set_cursor_pos((0, 0));
+            lcd.write_str_to_cur("BLE advertising "); // 16 chars — clears the whole line
             match advertise(&mut peripheral, &server).await {
                 Ok(conn) => {
+                    lcd.set_cursor_pos((0, 0));
+                    lcd.write_str_to_cur("BLE connected   ");
                     serve(&server, &conn, &esp_x25519_secret, &esp_signing_key, &mut rng).await;
                 }
                 Err(e) => info!("BLE advertise error: {:?}", e),

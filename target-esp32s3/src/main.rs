@@ -112,7 +112,17 @@ async fn main(spawner: Spawner) {
         let select_ble = true;
 
         if select_ble {
-            ble::run(init, peripherals.BT, esp_x25519_secret, esp_signing_key, rng).await;
+            ble::run(
+                init,
+                peripherals.BT,
+                esp_x25519_secret,
+                esp_signing_key,
+                rng,
+                peripherals.I2C0,
+                peripherals.GPIO8,
+                peripherals.GPIO9,
+            )
+            .await;
             // ble::run never returns; the UDP block below is reached only when select_ble == false.
         }
     }
