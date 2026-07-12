@@ -103,25 +103,30 @@ async fn main(spawner: Spawner) {
         #[cfg(feature = "udp-transport")]
         let select_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            // DIAGNOSTIC scan: pull up a set of free GPIOs and report any that read LOW. Ground
-            // your switch pad, reset, and the "SCAN: GPIOxx is LOW" line names the actual chip
-            // GPIO for that physical pad — ending the silkscreen-label guesswork. Grounding ANY
-            // scanned pin also selects BLE. (Revert to a single pin once the pad is confirmed.)
-            let mut ble = false;
+            // DIAGNOSTIC scan (LOG-ONLY): pull up a set of free GPIOs and report any that read
+            // LOW. Ground your switch pad, reset, and the "SCAN: GPIOxx is LOW" line names the
+            // actual chip GPIO for that physical pad — ending the silkscreen-label guesswork.
+            // This build ALWAYS boots UDP (never auto-selects BLE) so the device stays reachable
+            // and OTA-able no matter what the pins read. Once the pad's real GPIO is known, revert
+            // this to a single-pin read that drives `select_ble`.
+            let mut any_low = false;
             macro_rules! scan {
                 ($($g:ident),*) => {$(
                     {
                         let p = Input::new(peripherals.$g, InputConfig::default().with_pull(Pull::Up));
                         if p.is_low() {
-                            info!("SCAN: {} is LOW (grounded) -> selecting BLE", stringify!($g));
-                            ble = true;
+                            info!("SCAN: {} is LOW (grounded)", stringify!($g));
+                            any_low = true;
                         }
                     }
                 )*};
             }
             scan!(GPIO1, GPIO2, GPIO5, GPIO6, GPIO7, GPIO10, GPIO11, GPIO12, GPIO13, GPIO14, GPIO15, GPIO16, GPIO17, GPIO18);
-            info!("Transport: {}", if ble { "BLE (a pin was grounded)" } else { "UDP/Wi-Fi (no pin grounded)" });
-            ble
+            if !any_low {
+                info!("SCAN: no scanned pin is grounded");
+            }
+            info!("Transport: UDP/Wi-Fi (diagnostic build always boots UDP)");
+            false // always UDP — safe, stays reachable
         };
         #[cfg(not(feature = "udp-transport"))]
         let select_ble = true;
