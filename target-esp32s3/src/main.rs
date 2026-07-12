@@ -45,12 +45,11 @@ mod storage;
 #[cfg(feature = "udp-transport")]
 use crate::state::*;
 
-// Exactly one transport (see Cargo.toml / UDP-TRANSPORT.md): `udp-transport` (Wi-Fi datagrams,
-// default) or `ble-transport` (BLE GATT, same envelope, no Wi-Fi).
+// Transports (see Cargo.toml / UDP-TRANSPORT.md): `udp-transport` (Wi-Fi datagrams) and/or
+// `ble-transport` (BLE GATT, same envelope). Both together = a hybrid build: a physical switch on
+// a GPIO selects which radio comes up at boot (only one at a time — no coex).
 #[cfg(not(any(feature = "udp-transport", feature = "ble-transport")))]
-compile_error!("enable a transport: `udp-transport` or `ble-transport`");
-#[cfg(all(feature = "udp-transport", feature = "ble-transport"))]
-compile_error!("enable exactly ONE transport, not both");
+compile_error!("enable a transport: `udp-transport` and/or `ble-transport`");
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -94,11 +93,28 @@ async fn main(spawner: Spawner) {
     // We can still pass rng to esp_wifi because we didn't consume it (Rng is Copy)
     let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
 
-    // ---- BLE transport: run the GATT server; Wi-Fi is never brought up ----
+    // ---- Transport select (hybrid): a physical switch on GPIO10 picks the radio at boot ----
+    // Wired to GND → BLE; open (internal pull-up) → UDP/Wi-Fi. Only one radio comes up (no coex),
+    // so it's robust and deploys to a sealed board via OTA (default UDP keeps working). In a
+    // BLE-only build (no udp-transport) there is no fallback, so BLE always runs.
     #[cfg(feature = "ble-transport")]
     {
         let _ = &spawner; // spawner is only used by the UDP transport block below
-        ble::run(init, peripherals.BT, esp_x25519_secret, esp_signing_key, rng).await;
+        #[cfg(feature = "udp-transport")]
+        let select_ble = {
+            use esp_hal::gpio::{Input, InputConfig, Pull};
+            let sw = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
+            let ble = sw.is_low();
+            info!("Transport switch (GPIO10): {}", if ble { "BLE" } else { "UDP/Wi-Fi" });
+            ble
+        };
+        #[cfg(not(feature = "udp-transport"))]
+        let select_ble = true;
+
+        if select_ble {
+            ble::run(init, peripherals.BT, esp_x25519_secret, esp_signing_key, rng).await;
+            // ble::run never returns; the UDP block below is reached only when select_ble == false.
+        }
     }
 
     // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
