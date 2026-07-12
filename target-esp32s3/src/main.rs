@@ -100,26 +100,52 @@ async fn main(spawner: Spawner) {
     let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
 
     // ---- Transport select (hybrid): a physical switch on GPIO10 picks the radio at boot ----
-    // Switch feeds 3.3V (NEVER 5V — the S3 pin is not 5V-tolerant); an internal pull-down defines
-    // the released state. HIGH → BLE (the deliberate signal); LOW → UDP/Wi-Fi (the OTA-safe
-    // default — an un-flipped or centre-off switch keeps the board reachable). Only one radio comes
-    // up (no coex), so it deploys to a sealed board via OTA. In a BLE-only build (no udp-transport)
-    // there is no fallback, so BLE always runs. Wiring: GPIO10=common, 3.3V=one throw, GND=other.
+    // Active-LOW, matching the proven pull-up read direction (same as the DHT11 data line): an
+    // internal pull-up idles GPIO10 HIGH → UDP/Wi-Fi (the OTA-safe default — an un-flipped/centre-off
+    // switch keeps the board reachable). The switch closes GPIO10 to GND → LOW → BLE (the deliberate
+    // signal). No 3.3V is routed to the pin. Only one radio comes up (no coex), so it deploys to a
+    // sealed board via OTA. In a BLE-only build (no udp-transport) there is no fallback, so BLE runs.
     #[cfg(feature = "ble-transport")]
     {
         let _ = &spawner; // spawner is only used by the UDP transport block below
         #[cfg(feature = "udp-transport")]
         let select_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            // Single read of the transport-select pin. Internal pull-down holds LOW when the switch
-            // is released/centre-off, so the board defaults to UDP (reachable/OTA-able); driving
-            // GPIO10 to 3.3V flips it to BLE.
-            let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Down));
-            Timer::after(Duration::from_millis(10)).await; // let the level settle after reset
-            let ble = sel.is_high();
+            // TEMPORARY read-proof diagnostic (~15s). Both inputs read the SAME way the working DHT11
+            // does (external/internal pull-up, line idles HIGH, pulled to GND = LOW — Flex::level):
+            //   * GPIO0  = onboard BOOT button — hardwired on the module (external pull-up, button to
+            //     GND), NO breadboard wiring. Pressing BOOT MUST print "BOOT=LOW". That alone proves
+            //     the boot-time read path works.
+            //   * GPIO10 = transport-select pad, internal PULL-UP so it idles HIGH. Touching it to
+            //     GND MUST print "GPIO10=LOW" — proving the pad is chip-GPIO10 and reads in the
+            //     proven direction. (Earlier 3V3 -> LOW just meant the 3V3 leg never connected.)
+            // Final direction is active-LOW: pull-up idle HIGH = UDP (OTA-safe default); switch to
+            // GND = LOW = BLE. No 3.3V routed to the pin. Revert this debug commit once confirmed.
+            let boot = Input::new(peripherals.GPIO0, InputConfig::default()); // module already pulls GPIO0 up
+            let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
+            let (mut pb, mut ps) = (boot.is_high(), sel.is_high());
+            info!(
+                "DIAG ~15s: press BOOT (proves the read); touch GPIO10 to GND (proves the pad). Start: BOOT={} GPIO10={}",
+                if pb { "HIGH" } else { "LOW" },
+                if ps { "HIGH" } else { "LOW" }
+            );
+            for _ in 0..150u32 {
+                let (b, s) = (boot.is_high(), sel.is_high());
+                if b != pb || s != ps {
+                    info!(
+                        "DIAG: BOOT(GPIO0)={} GPIO10={}",
+                        if b { "HIGH" } else { "LOW (pressed)" },
+                        if s { "HIGH" } else { "LOW (grounded)" }
+                    );
+                    pb = b;
+                    ps = s;
+                }
+                Timer::after(Duration::from_millis(100)).await;
+            }
+            let ble = sel.is_low(); // active-low: GND = BLE, idle-HIGH = UDP
             info!(
                 "Transport select: GPIO10 = {} -> {}",
-                if ble { "HIGH" } else { "LOW" },
+                if sel.is_low() { "LOW" } else { "HIGH" },
                 if ble { "BLE" } else { "UDP/Wi-Fi" }
             );
             ble
