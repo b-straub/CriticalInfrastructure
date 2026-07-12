@@ -111,63 +111,19 @@ async fn main(spawner: Spawner) {
         #[cfg(feature = "udp-transport")]
         let select_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            // TEMPORARY full-pin dump — the read path is already proven (the onboard BOOT button on
-            // GPIO0 flips HIGH->LOW through this same code). Every free GPIO gets an internal pull-up
-            // so it idles HIGH; whichever pin your hard-wired GND pad is physically on prints LOW.
-            // Keep your GND wire on the pad, reset ONCE, read the list — no labels, no timing:
-            //   * GPIO10 = LOW  -> you were right, the pad is chip-GPIO10 and I hunt a GPIO10 quirk.
-            //   * some OTHER GPIO = LOW -> that is your pad's real chip pin; we point the switch there.
-            //   * nothing LOW -> the GND wire isn't actually contacting the pad (jumper/board), not SW.
-            // Always boots UDP so the board stays reachable/OTA-able. Revert once the pad is known.
-            macro_rules! mk {
-                ($id:ident) => {
-                    Input::new(peripherals.$id, InputConfig::default().with_pull(Pull::Up))
-                };
-            }
-            let pins = [
-                (0u8, mk!(GPIO0)), (1, mk!(GPIO1)), (2, mk!(GPIO2)), (3, mk!(GPIO3)),
-                (5, mk!(GPIO5)), (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)),
-                (11, mk!(GPIO11)), (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)),
-                (15, mk!(GPIO15)), (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)),
-                (38, mk!(GPIO38)), (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)),
-                (42, mk!(GPIO42)), (45, mk!(GPIO45)), (46, mk!(GPIO46)), (47, mk!(GPIO47)),
-                (48, mk!(GPIO48)),
-            ];
-            // LIVE finder (~45s): touch your GND wire to pads; the moment a real GPIO is grounded its
-            // number prints LOW (and prints again when released). Drag across pads to find a usable
-            // one. If nothing EVER prints while you probe, the GND wire/rail itself isn't grounding.
-            // Pure LEVEL polling (no interrupts/edges): re-read every pin 10x/s, and every 2s print
-            // the set of pins that are LOW *right now*. A static GND wire makes its pin stay in the
-            // "LOW now" list continuously — proving it's a level read, not a press/flank. If "LOW now"
-            // stays "(none)" while your wire is on a pad, that wire's GND end isn't real ground.
-            use core::fmt::Write as _;
-            let mut prev = [false; 32];
-            info!("LIVE PROBE ~60s: level of every free pin, polled. Wire GND to a pad; it stays LOW while connected.");
-            for t in 0..600u32 {
-                for (i, (n, p)) in pins.iter().enumerate() {
-                    let lo = p.is_low();
-                    if lo != prev[i] {
-                        info!("PROBE change: GPIO{} -> {}", n, if lo { "LOW" } else { "HIGH" });
-                        prev[i] = lo;
-                    }
-                }
-                if t % 20 == 0 {
-                    let mut low = heapless::String::<96>::new();
-                    for (n, p) in pins.iter() {
-                        if p.is_low() {
-                            let _ = write!(&mut low, "GPIO{} ", n);
-                        }
-                    }
-                    if low.is_empty() {
-                        info!("PROBE level @{}s: LOW now = (none grounded)", t / 10);
-                    } else {
-                        info!("PROBE level @{}s: LOW now = {}", t / 10, low);
-                    }
-                }
-                Timer::after(Duration::from_millis(100)).await;
-            }
-            info!("LIVE PROBE ended — booting UDP (reachable).");
-            false // always UDP during diagnosis
+            // Internal pull-up idles GPIO10 HIGH; the switch closes it to GND to select BLE. Wait past
+            // the ESP32-S3 boot glitch/settle window (some pads float-glitch for ~30-65ms after reset)
+            // before the single read, so a settling pad can't be misread. Pull-up means the pin is
+            // never floating, so with the switch open it reads a solid HIGH (UDP).
+            let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
+            Timer::after(Duration::from_millis(150)).await;
+            let ble = sel.is_low(); // active-low: GND = BLE; pull-up idle HIGH = UDP (OTA-safe default)
+            info!(
+                "Transport select: GPIO10 = {} -> {}",
+                if ble { "LOW" } else { "HIGH" },
+                if ble { "BLE" } else { "UDP/Wi-Fi" }
+            );
+            ble
         };
         #[cfg(not(feature = "udp-transport"))]
         let select_ble = true;
