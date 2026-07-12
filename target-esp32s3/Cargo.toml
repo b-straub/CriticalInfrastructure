@@ -10,10 +10,12 @@ edition = "2021"
 default = ["udp-transport"]
 udp-transport = ["dep:p256"]
 
-# BLE transport (spike): the device runs a BLE GATT server instead of Wi-Fi/UDP, carrying the
-# SAME command envelope. Mutually exclusive with udp-transport. Client auth is still P-256.
-# See docs/formal/UDP-TRANSPORT.md (transport-independent envelope). BLE-only — no Wi-Fi coex.
-ble-transport = ["esp-wifi/ble", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync", "dep:p256"]
+# BLE transport: the device runs a BLE GATT server instead of Wi-Fi/UDP, carrying the SAME command
+# envelope. Client auth is still P-256. See docs/formal/UDP-TRANSPORT.md (transport-independent
+# envelope). Pulls in esp-wifi/coex: the image also links the Wi-Fi controller (esp-wifi always has
+# the `wifi` feature), so the BT controller must bring up with Wi-Fi/BT coexistence arbitration or
+# `btdm_controller_enable` hangs. Only one radio actually runs at boot (the GPIO10 switch picks it).
+ble-transport = ["esp-wifi/ble", "esp-wifi/coex", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync", "dep:p256"]
 
 # Derive the device identity from a read-protected eFuse HMAC key via the
 # hardware HMAC-SHA256 peripheral (the key never leaves hardware). Requires the
