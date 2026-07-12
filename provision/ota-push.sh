@@ -22,18 +22,50 @@ esac; done
 [ -f "$IMG" ] || die "image not found: $IMG (build it with provision/3 or provision/5)"
 
 note "push $(basename "$IMG") ($(stat -f%z "$IMG") bytes) -> $HOST:$TPORT"
-python3 - "$HOST" "$TPORT" "$IMG" <<'PY'
-import socket, sys, struct
+rc=0
+python3 - "$HOST" "$TPORT" "$IMG" <<'PY' || rc=$?
+import socket, sys, struct, time
 host, port, path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 data = open(path, 'rb').read()
-s = socket.create_connection((host, port), timeout=25)
+# Connect with retries: the device has a single OTA socket and may be transiently unreachable
+# (rebooting, a serial monitor attached, or the previous accept still timing out). Retry for up
+# to ~45s rather than aborting the whole update on one closed window.
+s = None
+deadline = time.time() + 45
+while True:
+    try:
+        s = socket.create_connection((host, port), timeout=5)
+        break
+    except (OSError, socket.timeout) as e:
+        if time.time() >= deadline:
+            sys.stderr.write(f"could not connect to {host}:{port} within 45s ({e})\n")
+            sys.exit(2)
+        time.sleep(2)
 s.sendall(struct.pack('<I', len(data)))   # u32 LE length prefix
 s.sendall(data)
-try:                                       # device resets on success -> connection drops
-    s.settimeout(25); s.recv(1)
+# In-band verdict (ota.rs:295-313): on ACCEPT the device activates the slot and resets, so the
+# socket just drops with no data; on REJECT it replies "ERR <reason>\n" then closes. Read the
+# reply so a rejection is reported LOUDLY instead of being swallowed as a false success.
+s.settimeout(30)
+resp = b''
+try:
+    while len(resp) < 128 and b'\n' not in resp:
+        chunk = s.recv(128)
+        if not chunk:
+            break
+        resp += chunk
 except Exception:
     pass
 s.close()
-print(f"sent {len(data)} bytes")
+if resp.startswith(b'ERR'):
+    sys.stderr.write("REJECTED by device: " + resp.decode('ascii', 'replace').strip() + "\n")
+    sys.exit(3)
+print(f"sent {len(data)} bytes — ACCEPTED (device reset to boot the new slot; no ERR reply)")
 PY
+case "$rc" in
+  0) ;;
+  2) die "OTA push failed — could not reach $HOST:$TPORT (device rebooting, serial monitor attached, or wrong IP). Nothing was flashed.";;
+  3) die "OTA push failed — the device REJECTED the image (see 'REJECTED by device: ...' above). Nothing was flashed; it stays on the current image.";;
+  *) die "OTA push failed (exit $rc). Nothing was flashed.";;
+esac
 echo "watch the device serial: 'OTA: receiving N bytes' -> 'activated new slot; resetting' -> boots the other slot"
