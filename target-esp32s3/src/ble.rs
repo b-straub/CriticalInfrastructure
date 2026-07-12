@@ -49,8 +49,7 @@ struct ControlService {
 /// status since there is no IP in BLE mode; line 2 = firmware build tag).
 #[embassy_executor::task]
 pub async fn ble_task(
-    init: &'static EspWifiController<'static>,
-    bt: esp_hal::peripherals::BT<'static>,
+    connector: BleConnector<'static>,
     esp_x25519_secret: StaticSecret,
     esp_signing_key: SigningKey,
     mut rng: Rng,
@@ -59,8 +58,6 @@ pub async fn ble_task(
     // no I2C, no flash reads, no blocking delays between esp_wifi::init and BleConnector::new. If
     // this advertises, our LCD/blocking-init was the culprit; if it still wedges at BleConnector::new,
     // it is the BLE stack/board itself. Restore the LCD + role/threshold load once BLE is confirmed.
-    info!("BLE min 1: BleConnector::new");
-    let connector = BleConnector::new(init, bt);
     info!("BLE min 2: ExternalController::new");
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
     info!("BLE min 3: HostResources::new");

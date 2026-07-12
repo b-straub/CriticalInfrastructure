@@ -121,7 +121,7 @@ async fn main(spawner: Spawner) {
     // internal pull-up idles GPIO10 HIGH → UDP/Wi-Fi only. The switch closes GPIO10 to GND → LOW → 
     // BLE + Wi-Fi Coexistence.
     #[cfg(feature = "ble-transport")]
-    {
+    let enable_ble = {
         #[cfg(feature = "udp-transport")]
         let enable_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
@@ -130,7 +130,9 @@ async fn main(spawner: Spawner) {
             // before the single read, so a settling pad can't be misread. Pull-up means the pin is
             // never floating, so with the switch open it reads a solid HIGH (UDP).
             let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
-            Timer::after(Duration::from_millis(150)).await;
+            // In async main, `Timer::after` is not available until the executor runs. Wait synchronously.
+            let mut delay = esp_hal::delay::Delay::new();
+            delay.delay_millis(150);
             let ble = sel.is_low(); // active-low: GND = BLE; pull-up idle HIGH = UDP (OTA-safe default)
             info!(
                 "Transport select: GPIO10 = {} -> {}",
@@ -141,23 +143,34 @@ async fn main(spawner: Spawner) {
         };
         #[cfg(not(feature = "udp-transport"))]
         let enable_ble = true;
+        enable_ble
+    };
 
-        if enable_ble {
-            spawner.spawn(ble::ble_task(
-                init,
-                peripherals.BT,
-                esp_x25519_secret.clone(),
-                esp_signing_key.clone(),
-                rng,
-            )).unwrap();
-        }
-    }
+    #[cfg(feature = "ble-transport")]
+    let ble_connector = if enable_ble {
+        use esp_wifi::ble::controller::BleConnector;
+        info!("Creating BleConnector synchronously in main...");
+        Some(BleConnector::new(init, peripherals.BT))
+    } else {
+        None
+    };
 
     // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
     #[cfg(feature = "udp-transport")]
+    let (mut _controller, interfaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
+
+    #[cfg(feature = "ble-transport")]
+    if let Some(connector) = ble_connector {
+        spawner.spawn(ble::ble_task(
+            connector,
+            esp_x25519_secret.clone(),
+            esp_signing_key.clone(),
+            rng,
+        )).unwrap();
+    }
+
+    #[cfg(feature = "udp-transport")]
     {
-    let (mut _controller, interfaces) =
-        esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
     let wifi_interface = interfaces.sta;
 
     let spi_config = SpiConfig::default().with_frequency(esp_hal::time::Rate::from_mhz(3)).with_mode(Mode::_0);
