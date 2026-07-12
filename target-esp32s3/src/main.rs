@@ -77,6 +77,12 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
 
+    // Wi-Fi-only was tuned to 72 KB. A ble-transport build keeps esp-wifi's Wi-Fi static buffers
+    // AND the BLE controller/host (trouble-host HostResources + DefaultPacketPool) resident, so it
+    // needs a bigger heap or the BLE stack OOMs right after Wi-Fi init. UDP-only keeps 72 KB.
+    #[cfg(feature = "ble-transport")]
+    esp_alloc::heap_allocator!(size: 128 * 1024);
+    #[cfg(not(feature = "ble-transport"))]
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
     let timg1 = TimerGroup::new(peripherals.TIMG1);
@@ -93,51 +99,30 @@ async fn main(spawner: Spawner) {
     // We can still pass rng to esp_wifi because we didn't consume it (Rng is Copy)
     let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
 
-    // ---- Transport select (hybrid): a physical switch on GPIO14 picks the radio at boot ----
-    // Wired to GND → BLE; open (internal pull-up) → UDP/Wi-Fi. Only one radio comes up (no coex),
-    // so it's robust and deploys to a sealed board via OTA (default UDP keeps working). In a
-    // BLE-only build (no udp-transport) there is no fallback, so BLE always runs.
+    // ---- Transport select (hybrid): a physical switch on GPIO10 picks the radio at boot ----
+    // Switch feeds 3.3V (NEVER 5V — the S3 pin is not 5V-tolerant); an internal pull-down defines
+    // the released state. HIGH → BLE (the deliberate signal); LOW → UDP/Wi-Fi (the OTA-safe
+    // default — an un-flipped or centre-off switch keeps the board reachable). Only one radio comes
+    // up (no coex), so it deploys to a sealed board via OTA. In a BLE-only build (no udp-transport)
+    // there is no fallback, so BLE always runs. Wiring: GPIO10=common, 3.3V=one throw, GND=other.
     #[cfg(feature = "ble-transport")]
     {
         let _ = &spawner; // spawner is only used by the UDP transport block below
         #[cfg(feature = "udp-transport")]
         let select_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            // INTERACTIVE LIVE SCAN (~45s): hold a wide set of broken-out free GPIOs with internal
-            // pull-ups and poll them continuously, logging every level CHANGE. Flip your switch (or
-            // touch a GND jumper to a pad) and watch serial track it LIVE — "GPIOxx -> LOW"/"-> HIGH"
-            // names the pad in real time, so the once-at-boot timing can't hide it. After the window
-            // it ALWAYS boots UDP (stays reachable/OTA-able). Revert to a single GPIO read once the
-            // pad is confirmed.
-            macro_rules! mk {
-                ($id:ident) => {
-                    Input::new(peripherals.$id, InputConfig::default().with_pull(Pull::Up))
-                };
-            }
-            // GPIO0 = the onboard BOOT button (hardwired to the chip through GND). It is the CONTROL:
-            // pressing BOOT must print "GPIO0 -> LOW" — proving reads work with zero breadboard wiring.
-            let pins = [
-                (0u8, mk!(GPIO0)), (1, mk!(GPIO1)), (2, mk!(GPIO2)), (3, mk!(GPIO3)),
-                (5, mk!(GPIO5)), (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)),
-                (11, mk!(GPIO11)), (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)),
-                (15, mk!(GPIO15)), (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)),
-                (38, mk!(GPIO38)), (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)),
-                (42, mk!(GPIO42)), (47, mk!(GPIO47)), (48, mk!(GPIO48)),
-            ];
-            let mut prev = [false; 32]; // is_low state per pin (>= pins.len()); pull-ups => start high
-            info!("LIVE SCAN (~45s): press the onboard BOOT button (GPIO0) to prove reads work; then flip your switch. Changes below:");
-            for _ in 0..150u32 {
-                for (i, (g, p)) in pins.iter().enumerate() {
-                    let low = p.is_low();
-                    if low != prev[i] {
-                        info!("LIVE: GPIO{} -> {}", g, if low { "LOW (grounded)" } else { "HIGH" });
-                        prev[i] = low;
-                    }
-                }
-                Timer::after(Duration::from_millis(300)).await;
-            }
-            info!("Transport: UDP/Wi-Fi (live-scan window ended; always boots UDP)");
-            false // always UDP — safe, stays reachable
+            // Single read of the transport-select pin. Internal pull-down holds LOW when the switch
+            // is released/centre-off, so the board defaults to UDP (reachable/OTA-able); driving
+            // GPIO10 to 3.3V flips it to BLE.
+            let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Down));
+            Timer::after(Duration::from_millis(10)).await; // let the level settle after reset
+            let ble = sel.is_high();
+            info!(
+                "Transport select: GPIO10 = {} -> {}",
+                if ble { "HIGH" } else { "LOW" },
+                if ble { "BLE" } else { "UDP/Wi-Fi" }
+            );
+            ble
         };
         #[cfg(not(feature = "udp-transport"))]
         let select_ble = true;
