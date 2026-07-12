@@ -106,16 +106,40 @@ async fn main(spawner: Spawner) {
     let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
 
     // ---- Transport select (hybrid): a physical switch on GPIO10 picks the radio at boot ----
-    // This is now modified to support Wi-Fi and BLE coexistence. Both transports run concurrently.
+    // Active-LOW, matching the proven pull-up read direction (same as the DHT11 data line): an
+    // internal pull-up idles GPIO10 HIGH → UDP/Wi-Fi only. The switch closes GPIO10 to GND → LOW → 
+    // BLE + Wi-Fi Coexistence.
     #[cfg(feature = "ble-transport")]
     {
-        spawner.spawn(ble::ble_task(
-            init,
-            peripherals.BT,
-            esp_x25519_secret.clone(),
-            esp_signing_key.clone(),
-            rng,
-        )).unwrap();
+        #[cfg(feature = "udp-transport")]
+        let enable_ble = {
+            use esp_hal::gpio::{Input, InputConfig, Pull};
+            // Internal pull-up idles GPIO10 HIGH; the switch closes it to GND to select BLE. Wait past
+            // the ESP32-S3 boot glitch/settle window (some pads float-glitch for ~30-65ms after reset)
+            // before the single read, so a settling pad can't be misread. Pull-up means the pin is
+            // never floating, so with the switch open it reads a solid HIGH (UDP).
+            let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
+            Timer::after(Duration::from_millis(150)).await;
+            let ble = sel.is_low(); // active-low: GND = BLE; pull-up idle HIGH = UDP (OTA-safe default)
+            info!(
+                "Transport select: GPIO10 = {} -> {}",
+                if ble { "LOW" } else { "HIGH" },
+                if ble { "BLE + UDP (Coex)" } else { "UDP/Wi-Fi Only" }
+            );
+            ble
+        };
+        #[cfg(not(feature = "udp-transport"))]
+        let enable_ble = true;
+
+        if enable_ble {
+            spawner.spawn(ble::ble_task(
+                init,
+                peripherals.BT,
+                esp_x25519_secret.clone(),
+                esp_signing_key.clone(),
+                rng,
+            )).unwrap();
+        }
     }
 
     // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
