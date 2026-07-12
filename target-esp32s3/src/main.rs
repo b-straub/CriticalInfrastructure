@@ -114,16 +114,18 @@ async fn main(spawner: Spawner) {
                     Input::new(peripherals.$id, InputConfig::default().with_pull(Pull::Up))
                 };
             }
+            // GPIO0 = the onboard BOOT button (hardwired to the chip through GND). It is the CONTROL:
+            // pressing BOOT must print "GPIO0 -> LOW" — proving reads work with zero breadboard wiring.
             let pins = [
-                (1u8, mk!(GPIO1)), (2, mk!(GPIO2)), (3, mk!(GPIO3)), (5, mk!(GPIO5)),
-                (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)), (11, mk!(GPIO11)),
-                (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)), (15, mk!(GPIO15)),
-                (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)), (38, mk!(GPIO38)),
-                (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)), (42, mk!(GPIO42)),
-                (47, mk!(GPIO47)), (48, mk!(GPIO48)),
+                (0u8, mk!(GPIO0)), (1, mk!(GPIO1)), (2, mk!(GPIO2)), (3, mk!(GPIO3)),
+                (5, mk!(GPIO5)), (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)),
+                (11, mk!(GPIO11)), (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)),
+                (15, mk!(GPIO15)), (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)),
+                (38, mk!(GPIO38)), (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)),
+                (42, mk!(GPIO42)), (47, mk!(GPIO47)), (48, mk!(GPIO48)),
             ];
             let mut prev = [false; 32]; // is_low state per pin (>= pins.len()); pull-ups => start high
-            info!("LIVE SCAN: flip your switch / touch GND to a pad now (~45s). Level changes below:");
+            info!("LIVE SCAN (~45s): press the onboard BOOT button (GPIO0) to prove reads work; then flip your switch. Changes below:");
             for _ in 0..150u32 {
                 for (i, (g, p)) in pins.iter().enumerate() {
                     let low = p.is_low();
