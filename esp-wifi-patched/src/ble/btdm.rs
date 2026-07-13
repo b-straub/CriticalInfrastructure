@@ -436,8 +436,12 @@ pub(crate) fn ble_init() {
         debug!("The btdm_controller_init was initialized");
 
         #[cfg(coex)]
-        crate::binary::include::coex_enable();
+        {
+            info!("Calling binary::include::coex_enable()...");
+            crate::binary::include::coex_enable();
+        }
 
+        info!("Calling phy_enable() second time...");
         crate::common_adapter::chip_specific::phy_enable();
 
         #[cfg(esp32)]
@@ -451,11 +455,18 @@ pub(crate) fn ble_init() {
         }
 
         #[cfg(coex)]
-        coex_enable();
+        {
+            info!("Calling coex_enable()...");
+            coex_enable();
+        }
 
+        info!("Calling btdm_controller_enable...");
         btdm_controller_enable(esp_bt_mode_t_ESP_BT_MODE_BLE);
+        info!("btdm_controller_enable finished!");
 
+        info!("Calling API_vhci_host_register_callback...");
         API_vhci_host_register_callback(&VHCI_HOST_CALLBACK);
+        info!("ble_init finished successfully!");
     }
 }
 
