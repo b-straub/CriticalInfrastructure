@@ -398,15 +398,15 @@ pub(crate) fn ble_init() {
         if res != 0 {
             panic!("btdm_osi_funcs_register returned {}", res);
         }
-        log::info!("Calling phy_enable()...");
+        info!("Calling phy_enable()...");
         crate::common_adapter::chip_specific::phy_enable();
-        log::info!("phy_enable() finished!");
+        info!("phy_enable() finished!");
 
         #[cfg(coex)]
         {
-            log::info!("Calling coex_init()...");
+            info!("Calling coex_init()...");
             let res = crate::wifi::coex_init();
-            log::info!("coex_init() finished!");
+            info!("coex_init() finished!");
             if res != 0 {
                 panic!("got error");
             }
@@ -421,7 +421,7 @@ pub(crate) fn ble_init() {
         ble_os_adapter_chip_specific::disable_sleep_mode();
 
         #[cfg(any(esp32c3, esp32s3))]
-        log::info!("Calling btdm_controller_init..."); let res = btdm_controller_init(&mut cfg as *mut esp_bt_controller_config_t); log::info!("btdm_controller_init finished with {}", res);
+        info!("Calling btdm_controller_init..."); let res = btdm_controller_init(&mut cfg as *mut esp_bt_controller_config_t); info!("btdm_controller_init finished with {}", res);
 
         #[cfg(esp32)]
         let res = btdm_controller_init(
