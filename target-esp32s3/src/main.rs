@@ -39,7 +39,6 @@ mod identity;
 mod net;
 mod ota;
 mod protocol;
-#[cfg(feature = "udp-transport")]
 mod sensor;
 mod state;
 mod storage;
@@ -184,6 +183,9 @@ async fn main(spawner: Spawner) {
     }
     lcd_delay.delay_millis(5);
 
+    // DHT11 data line (GPIO21) — both transports show temp/humidity on LCD line 2.
+    let mut dht_pin = esp_hal::gpio::Flex::new(peripherals.GPIO21);
+
     // ---- BLE Transport ----
     #[cfg(feature = "ble-transport")]
     let ble_connector = if enable_ble {
@@ -240,10 +242,6 @@ async fn main(spawner: Spawner) {
     // LCD driver over the I2C bus brought up before the transport split.
     let mut sender = I2cSender::new(&mut i2c, 0x27);
     let mut lcd = Lcd::new(&mut sender, &mut lcd_delay, Default::default(), Default::default());
-
-    // Set up GPIO21 for DHT11 data line
-    use esp_hal::gpio::Flex;
-    let mut dht_pin = Flex::new(peripherals.GPIO21);
 
     lcd.clean_display();
     lcd.write_str_to_cur("Init Network...");
@@ -466,7 +464,7 @@ async fn main(spawner: Spawner) {
         lcd.write_str_to_cur("BLE starting... ");
 
         let mut shown = 0xFFu8;
-        let mut tick = false;
+        let mut sensor_tick = true; // read the DHT11 on every 2nd loop pass (2s, like UDP mode)
         loop {
             let status = ble::BLE_STATUS.load(Ordering::Relaxed);
             if status != shown {
@@ -478,14 +476,21 @@ async fn main(spawner: Spawner) {
                     _ => "BLE starting... ",
                 });
             }
-            tick = !tick;
-            let mut line = heapless::String::<16>::new();
-            let _ = write!(&mut line, "FW {} {}", env!("FW_SHORT"), if tick { "*" } else { " " });
-            while line.len() < 16 {
-                let _ = line.push(' ');
+            sensor_tick = !sensor_tick;
+            if sensor_tick {
+                // Same line-2 format as UDP mode: temp/humidity + build tag.
+                let mut line = heapless::String::<16>::new();
+                if let Some((temp, hum)) = sensor::read_dht11(&mut dht_pin) {
+                    let _ = write!(&mut line, "{:.1}C {:.0}%H {}", temp, hum, env!("FW_SHORT"));
+                } else {
+                    let _ = write!(&mut line, "Sensor Error");
+                }
+                while line.len() < 16 {
+                    let _ = line.push(' ');
+                }
+                lcd.set_cursor_pos((0, 1));
+                lcd.write_str_to_cur(&line);
             }
-            lcd.set_cursor_pos((0, 1));
-            lcd.write_str_to_cur(&line);
             embassy_time::Timer::after(embassy_time::Duration::from_millis(1000)).await;
         }
     }

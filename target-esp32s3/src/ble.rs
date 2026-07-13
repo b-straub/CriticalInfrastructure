@@ -111,20 +111,34 @@ async fn advertise<'a, 'b, C: Controller>(
     peripheral: &mut Peripheral<'a, C, DefaultPacketPool>,
     server: &'b Server<'_>,
 ) -> Result<GattConnection<'a, 'b, DefaultPacketPool>, BleHostError<C::Error>> {
+    // The Swift client discovers the device with a service-UUID-filtered scan
+    // (`scanForPeripherals(withServices:)`), so the 128-bit service UUID MUST be in the
+    // advertisement itself. Flags(3) + Uuid128(18) fills the 31-byte ADV payload; the name
+    // goes into the scan response (CoreBluetooth merges both, scanners still show the name).
+    // Bytes are the GATT service UUID 9e7312e0-2354-11eb-9f10-fbc30a62cf38, little-endian.
+    const SERVICE_UUID_LE: [u8; 16] = [
+        0x38, 0xcf, 0x62, 0x0a, 0xc3, 0xfb, 0x10, 0x9f, 0xeb, 0x11, 0x54, 0x23, 0xe0, 0x12,
+        0x73, 0x9e,
+    ];
     let mut adv_data = [0u8; 31];
     let len = AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::CompleteLocalName(b"CriticalInfra"),
+            AdStructure::ServiceUuids128(&[SERVICE_UUID_LE]),
         ],
         &mut adv_data[..],
+    )?;
+    let mut scan_data = [0u8; 31];
+    let scan_len = AdStructure::encode_slice(
+        &[AdStructure::CompleteLocalName(b"CriticalInfra")],
+        &mut scan_data[..],
     )?;
     let advertiser = peripheral
         .advertise(
             &Default::default(),
             Advertisement::ConnectableScannableUndirected {
                 adv_data: &adv_data[..len],
-                scan_data: &[],
+                scan_data: &scan_data[..scan_len],
             },
         )
         .await?;
