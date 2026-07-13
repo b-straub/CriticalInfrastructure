@@ -148,19 +148,8 @@ async fn main(spawner: Spawner) {
     // btdm_controller_enable hangs if the Wi-Fi driver isn't initialized because coex deadlocks.
     #[cfg(feature = "udp-transport")]
     let (mut _controller, interfaces) = {
-        let (mut ctrl, ifaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
+        let (ctrl, ifaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
         log::info!("wifi::new created successfully");
-        
-        // If we are booting BLE, start Wi-Fi to fully initialize the coex state machine,
-        // otherwise btdm_controller_enable deadlocks waiting for the Wi-Fi radio lock.
-        if enable_ble {
-            log::info!("Starting Wi-Fi to satisfy coex...");
-            use esp_wifi::wifi::{Configuration, ClientConfiguration};
-            ctrl.set_configuration(&Configuration::Client(ClientConfiguration::default())).unwrap();
-            ctrl.start().unwrap();
-            log::info!("Wi-Fi started.");
-        }
-        
         (ctrl, ifaces)
     };
 
