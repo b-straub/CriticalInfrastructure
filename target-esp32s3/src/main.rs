@@ -186,6 +186,23 @@ async fn main(spawner: Spawner) {
     // DHT11 data line (GPIO21) — both transports show temp/humidity on LCD line 2.
     let mut dht_pin = esp_hal::gpio::Flex::new(peripherals.GPIO21);
 
+    // Persisted state is transport-independent: the SAME roles and alarm threshold apply
+    // whether a command arrives over UDP or BLE, so load them before the transport split.
+    // (This used to live in the UDP branch only — a BLE boot then ran with an empty role
+    // table and rejected every granted client identity as "Unknown Role".)
+    if let Some(saved_roles) = storage::load_roles() {
+        unsafe {
+            crate::state::ROLES = saved_roles;
+        }
+        info!("Loaded roles from flash");
+    }
+    if let Some(stored) = storage::load_threshold() {
+        unsafe {
+            crate::state::THRESHOLD = stored;
+        }
+        info!("Loaded threshold from flash: {:.1}C", stored);
+    }
+
     // ---- BLE Transport ----
     #[cfg(feature = "ble-transport")]
     let ble_connector = if enable_ble {
@@ -260,22 +277,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net::net_task(runner).unwrap());
     #[cfg(feature = "ota-net")]
     spawner.spawn(ota::server_task(stack).unwrap());
-
-    if let Some(saved_roles) = storage::load_roles() {
-        unsafe {
-            ROLES = saved_roles;
-        }
-        info!("Loaded roles from flash");
-    }
-
-    // Load the persisted alarm threshold (falls back to the compiled default if
-    // never written / flash erased).
-    if let Some(stored) = storage::load_threshold() {
-        unsafe {
-            THRESHOLD = stored;
-        }
-        info!("Loaded threshold from flash: {:.1}C", stored);
-    }
 
 
     loop {

@@ -55,7 +55,6 @@ fn write_page(off: u32, page: &Page) -> bool {
 }
 
 /// Load the persisted, supervisor-signed roles (postcard-encoded).
-#[cfg(feature = "udp-transport")]
 pub fn load_roles() -> Option<heapless::Vec<RoleEntry, 10>> {
     let mut page = Page([0u8; SECTOR]);
     if !read_page(ROLES_OFF, &mut page) {
@@ -74,7 +73,6 @@ pub fn save_roles(roles: &heapless::Vec<RoleEntry, 10>) {
 }
 
 /// Load the persisted alarm threshold, if a sane value was stored.
-#[cfg(feature = "udp-transport")]
 pub fn load_threshold() -> Option<f32> {
     let mut page = Page([0u8; SECTOR]);
     if read_page(THRESHOLD_OFF, &mut page) {
