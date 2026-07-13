@@ -53,10 +53,12 @@ compile_error!("enable a transport: `udp-transport` and/or `ble-transport`");
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
-    // TEMPORARY: force Debug so esp-wifi's own breadcrumbs through ble_init print (BT controller
-    // compile version, "btdm_controller_init was initialized", etc.) — pinpoints which C call in
-    // the BTDM bring-up hangs. Revert to init_logger_from_env() once BLE is up.
-    esp_println::logger::init_logger(log::LevelFilter::Debug);
+    // TEMPORARY: force Trace so esp-wifi's OSI breadcrumbs print (task_create of the BT
+    // controller task, interrupt_handler_set for BT_BB/RWBLE, semphr_take/give, ISR entries).
+    // The last trace before silence tells us whether btdm_controller_enable is spinning on a
+    // semaphore (scheduler alive, radio event missing) or the console itself died (USB PHY).
+    // Revert to init_logger_from_env() once BLE is up.
+    esp_println::logger::init_logger(log::LevelFilter::Trace);
     info!("Starting...");
     info!("Firmware {} built {}", env!("FW_VERSION"), env!("FW_BUILD"));
     if let Some(raw_hex_str) = option_env!("SUPERVISOR_PUBKEY") {
