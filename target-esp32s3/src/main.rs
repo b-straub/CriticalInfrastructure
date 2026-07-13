@@ -35,6 +35,7 @@ mod clientauth;
 mod commands;
 mod crypto;
 mod identity;
+#[cfg(feature = "udp-transport")]
 mod net;
 mod ota;
 mod protocol;
@@ -51,11 +52,11 @@ use crate::state::*;
 #[cfg(not(any(feature = "udp-transport", feature = "ble-transport")))]
 compile_error!("enable a transport: `udp-transport` and/or `ble-transport`");
 
-#[esp_hal_embassy::main]
+#[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    // TEMPORARY (BLE bring-up forensics): build with ESP_LOG="info,esp_wifi=trace" so esp-wifi's
-    // trace!/debug! are compiled in, but start the runtime gate at Info — the UDP/OTA path must
-    // stay quiet (a trace-flooded Wi-Fi boot crawls and endangers OTA-ability on this sealed
+    // TEMPORARY (BLE bring-up forensics): build with ESP_LOG="info,esp_radio=trace,esp_rtos=trace"
+    // so the radio traces are compiled in, but start the runtime gate at Info — the UDP/OTA path
+    // must stay quiet (a trace-flooded Wi-Fi boot crawls and endangers OTA-ability on this sealed
     // device). The gate is raised to Trace only for a BLE-mode boot, after the GPIO10 read below.
     // Revert to init_logger_from_env() once BLE is up.
     esp_println::logger::init_logger(log::LevelFilter::Info);
@@ -68,7 +69,7 @@ async fn main(spawner: Spawner) {
         info!("WARNING: No SUPERVISOR_PUBKEY found at compile time! Crypto will default to zeros.");
     }
 
-    // CpuClock::default() is only 80 MHz; esp-wifi's radio needs the full 240 MHz. Wi-Fi tolerates
+    // CpuClock::default() is only 80 MHz; the radio needs the full 240 MHz. Wi-Fi tolerates
     // 80 MHz but the BLE/BT controller PHY bring-up hangs (esp-wifi-sys #409), so run at max.
     let peripherals =
         esp_hal::init(esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()));
@@ -82,15 +83,14 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "ota-selftest")]
     ota::maybe_self_copy_test();
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_hal_embassy::init(timg0.timer0);
-
-    // Coexistence (Wi-Fi + BLE) requires ~200KB heap, but the linker cannot fit a
-    // single 200KB contiguous block into the `.bss` segment due to fragmentation.
-    // By splitting it into two blocks, the linker can place them in available SRAM.
+    // The radio blob needs ~200KB heap, but the linker cannot fit a single 200KB
+    // contiguous block into the `.bss` segment due to fragmentation. By splitting it
+    // into two blocks, the linker can place them in available SRAM.
     // IMPORTANT: use u32 to force 4-byte alignment; C-blobs will crash on misaligned ptrs!
+    // (68KB not 72KB: esp-rtos/esp-radio 0.18 statics grew .bss slightly; 72KB overflowed the
+    // DRAM region reserved before the main stack by ~0.4KB at link time.)
     static mut HEAP1: core::mem::MaybeUninit<[u32; 32 * 1024]> = core::mem::MaybeUninit::uninit();
-    static mut HEAP2: core::mem::MaybeUninit<[u32; 18 * 1024]> = core::mem::MaybeUninit::uninit();
+    static mut HEAP2: core::mem::MaybeUninit<[u32; 17 * 1024]> = core::mem::MaybeUninit::uninit();
 
     unsafe {
         esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
@@ -100,13 +100,19 @@ async fn main(spawner: Spawner) {
         ));
         esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
             core::ptr::addr_of_mut!(HEAP2).cast::<u8>(),
-            72 * 1024,
+            68 * 1024,
             esp_alloc::MemoryCapability::Internal.into(),
         ));
     }
 
-    let timg1 = TimerGroup::new(peripherals.TIMG1);
-    let mut rng = Rng::new(peripherals.RNG);
+    // esp-rtos replaces both esp-hal-embassy (executor/time driver) and the old esp-wifi
+    // builtin scheduler: one priority scheduler drives embassy AND the radio blob's tasks.
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    let sw_int =
+        esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+
+    let mut rng = Rng::new();
 
     // Device identity (X25519 for the command envelope, Ed25519 for signing
     // responses). The two provisioning paths live in `identity.rs`.
@@ -115,9 +121,6 @@ async fn main(spawner: Spawner) {
         identity::derive_identity(peripherals.SHA, peripherals.HMAC);
     #[cfg(not(feature = "efuse-hmac-identity"))]
     let (esp_x25519_secret, esp_signing_key) = identity::derive_identity(&mut rng);
-
-    // We can still pass rng to esp_wifi because we didn't consume it (Rng is Copy)
-    let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
 
     // ---- Transport select (hybrid): a physical switch on GPIO10 picks the radio at boot ----
     // Active-LOW, matching the proven pull-up read direction (same as the DHT11 data line): an
@@ -146,9 +149,8 @@ async fn main(spawner: Spawner) {
     };
 
     // TEMPORARY (BLE bring-up forensics, see logger init above): only a BLE boot raises the
-    // runtime gate to Trace, emitting esp-wifi's OSI breadcrumbs (task_create of the BT
-    // controller task, interrupt_handler_set for BT_BB/RWBLE, semphr/queue traffic). The last
-    // trace before silence shows what btdm_controller_enable is blocked on.
+    // runtime gate to Trace, emitting esp-radio's OSI breadcrumbs. Drop this (and go back to
+    // init_logger_from_env) once BLE on esp-radio is confirmed on hardware.
     if enable_ble {
         log::set_max_level(log::LevelFilter::Trace);
     }
@@ -158,29 +160,44 @@ async fn main(spawner: Spawner) {
     // ---- BLE Transport ----
     #[cfg(feature = "ble-transport")]
     let ble_connector = if enable_ble {
-        use esp_wifi::ble::controller::BleConnector;
-        info!("Creating BleConnector synchronously in main after Wi-Fi...");
-        Some(BleConnector::new(init, peripherals.BT))
+        use esp_radio::ble::controller::BleConnector;
+        info!("Creating BleConnector...");
+        Some(BleConnector::new(peripherals.BT, Default::default()).unwrap())
     } else {
         None
     };
 
     #[cfg(feature = "ble-transport")]
     if let Some(connector) = ble_connector {
-        spawner.spawn(ble::ble_task(
-            connector,
-            esp_x25519_secret.clone(),
-            esp_signing_key.clone(),
-            rng,
-        )).unwrap();
+        // embassy-executor 0.10: the task-fn call is the fallible part (arena allocation),
+        // spawn() itself takes the token and returns ().
+        spawner.spawn(
+            ble::ble_task(
+                connector,
+                esp_x25519_secret.clone(),
+                esp_signing_key.clone(),
+                rng,
+            )
+            .unwrap(),
+        );
     }
 
     // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
     #[cfg(feature = "udp-transport")]
     if !enable_ble {
-        let (mut _controller, interfaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
+        use esp_radio::wifi::{sta::StationConfig, Config as WifiConfig, ControllerConfig};
+        let station_config = WifiConfig::Station(
+            StationConfig::default()
+                .with_ssid(option_env!("WIFI_SSID").unwrap_or("YOUR_SSID"))
+                .with_password(option_env!("WIFI_PASS").unwrap_or("YOUR_PASSWORD").into()),
+        );
+        let (_controller, interfaces) = esp_radio::wifi::new(
+            peripherals.WIFI,
+            ControllerConfig::default().with_initial_config(station_config),
+        )
+        .unwrap();
         log::info!("wifi::new created successfully");
-        let wifi_interface = interfaces.sta;
+        let wifi_interface = interfaces.station;
 
     let spi_config = SpiConfig::default().with_frequency(esp_hal::time::Rate::from_mhz(3)).with_mode(Mode::_0);
     let spi = Spi::new(peripherals.SPI2, spi_config).expect("SPI new failed")
@@ -237,10 +254,10 @@ async fn main(spawner: Spawner) {
         1234, // Random seed
     );
 
-    spawner.spawn(net::connection(_controller)).unwrap();
-    spawner.spawn(net::net_task(runner)).unwrap();
+    spawner.spawn(net::connection(_controller).unwrap());
+    spawner.spawn(net::net_task(runner).unwrap());
     #[cfg(feature = "ota-net")]
-    spawner.spawn(ota::server_task(stack)).unwrap();
+    spawner.spawn(ota::server_task(stack).unwrap());
 
     if let Some(saved_roles) = storage::load_roles() {
         unsafe {

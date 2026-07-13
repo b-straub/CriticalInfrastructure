@@ -1,8 +1,9 @@
 //! BLE GATT transport — carries the SAME command envelope as the UDP path over a Bluetooth LE
 //! GATT link, so the device is controllable without Wi-Fi/LAN (commissioning, network-down, iOS
 //! without a network). In a hybrid build (both `udp-transport` + `ble-transport`) a physical
-//! switch on GPIO10 (HIGH = BLE) selects this path over UDP at boot; only one radio runs (no coex),
-//! which keeps it robust and lets a hybrid image deploy to a sealed board via OTA.
+//! switch on GPIO10 (LOW = BLE, active-low pull-up) selects this path over UDP at boot; only one
+//! radio runs (no coex), which keeps it robust and lets a hybrid image deploy to a sealed board
+//! via OTA.
 //!
 //! The security boundary is the app-layer envelope (X25519 + AES-GCM + P-256/Ed25519), so the
 //! BLE link itself needs no pairing/bonding — a "just works" connection is fine; bad envelopes
@@ -16,7 +17,7 @@ use bt_hci::controller::ExternalController;
 use embassy_futures::join::join;
 use ed25519_dalek::SigningKey;
 use esp_hal::rng::Rng;
-use esp_wifi::ble::controller::BleConnector;
+use esp_radio::ble::controller::BleConnector;
 
 use log::info;
 use trouble_host::prelude::*;
@@ -29,7 +30,8 @@ const CHAR_CAP: usize = MAX_CHUNK + 2;
 /// Largest reassembled request we accept.
 const MAX_REQ: usize = 1024;
 
-type Frame = heapless::Vec<u8, CHAR_CAP>;
+// heapless 0.9 (aliased): trouble's AsGatt/FromGatt impls are for its own heapless generation.
+type Frame = heapless_v09::Vec<u8, CHAR_CAP>;
 
 #[gatt_server]
 struct Server {
@@ -54,10 +56,9 @@ pub async fn ble_task(
     esp_signing_key: SigningKey,
     mut rng: Rng,
 ) -> ! {
-    // MINIMAL reference test: strip everything the trouble-host v0.2.4 example does NOT do — no LCD,
-    // no I2C, no flash reads, no blocking delays between esp_wifi::init and BleConnector::new. If
-    // this advertises, our LCD/blocking-init was the culprit; if it still wedges at BleConnector::new,
-    // it is the BLE stack/board itself. Restore the LCD + role/threshold load once BLE is confirmed.
+    // Mirrors the upstream trouble-host bas_peripheral example (esp-radio 0.18) with the GATT
+    // service swapped for the command-envelope transport. Deliberately minimal — no LCD/I2C, no
+    // flash reads; restore the LCD + role/threshold load once BLE is confirmed on hardware.
     info!("BLE min 2: ExternalController::new");
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
     info!("BLE min 3: HostResources::new");
@@ -195,7 +196,7 @@ async fn respond(
     let bytes = result.response.as_bytes();
     let total = bytes.len().div_ceil(MAX_CHUNK).max(1);
     for (seq, chunk) in bytes.chunks(MAX_CHUNK).enumerate() {
-        let mut frame: Frame = heapless::Vec::new();
+        let mut frame = Frame::new();
         let _ = frame.push(total as u8);
         let _ = frame.push(seq as u8);
         let _ = frame.extend_from_slice(chunk);

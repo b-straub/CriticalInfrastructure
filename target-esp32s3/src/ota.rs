@@ -50,7 +50,7 @@ fn slot_offset(slot: u8) -> u32 {
     }
 }
 fn fe() -> bool {
-    esp_hal::efuse::Efuse::flash_encryption()
+    esp_hal::efuse::flash_encryption()
 }
 
 /// Sector-aligned scratch — `esp_rom_spiflash_write_encrypted` takes `*mut u32` and
@@ -130,7 +130,7 @@ fn put_sector(addr: u32, buf: &mut AlignedSector, encrypted: bool) {
     if encrypted {
         let _ = flash_enc::write_sector(addr, &mut buf.0);
     } else {
-        let _ = FlashStorage::new().write(addr, &buf.0[..]);
+        let _ = FlashStorage::new(unsafe { esp_hal::peripherals::FLASH::steal() }).write(addr, &buf.0[..]);
     }
 }
 
@@ -231,7 +231,7 @@ pub fn maybe_self_copy_test() {
     }
     let src = slot_offset(0);
     let dst = slot_offset(1);
-    let mut fs = FlashStorage::new();
+    let mut fs = FlashStorage::new(unsafe { esp_hal::peripherals::FLASH::steal() });
     let len = match signed_image_len(&mut fs, src) {
         Some(l) => (l + SECTOR as u32 - 1) & !(SECTOR as u32 - 1),
         None => {

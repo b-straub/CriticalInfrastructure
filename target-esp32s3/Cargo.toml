@@ -8,15 +8,15 @@ edition = "2021"
 # PIV hardware key), authenticating them with P-256 ECDSA (Secure Enclave / hardware
 # security keys) — so it pulls in the p256 crate. See docs/formal/UDP-TRANSPORT.md.
 default = ["udp-transport"]
-# Wi-Fi is scoped to udp-transport (not hardcoded on esp-wifi) so a pure `ble-transport` build links
-# esp-wifi with ONLY the `ble` feature — matching the standalone trouble-host reference exactly.
-udp-transport = ["esp-wifi/wifi", "dep:p256"]
+# Wi-Fi is scoped to udp-transport (not hardcoded on esp-radio) so a pure `ble-transport` build
+# links esp-radio with ONLY the `ble` feature — matching the upstream bas_peripheral example.
+udp-transport = ["esp-radio/wifi", "dep:p256"]
 
 # BLE transport: the device runs a BLE GATT server instead of Wi-Fi/UDP, carrying the SAME command
 # envelope. Client auth is still P-256. See docs/formal/UDP-TRANSPORT.md (transport-independent
 # envelope). A hybrid build (udp+ble) links both radios; a `--no-default-features --features
-# ble-transport` build links esp-wifi BLE-only (no Wi-Fi, no coex) for the spare-board bring-up test.
-ble-transport = ["esp-wifi/ble", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync", "dep:p256"]
+# ble-transport` build links esp-radio BLE-only (no Wi-Fi, no coex) for the spare-board bring-up test.
+ble-transport = ["esp-radio/ble", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync", "dep:heapless-v09", "dep:p256"]
 
 # Derive the device identity from a read-protected eFuse HMAC key via the
 # hardware HMAC-SHA256 peripheral (the key never leaves hardware). Requires the
@@ -47,32 +47,41 @@ p256 = { version = "0.13", default-features = false, features = ["ecdsa"], optio
 # time. Optional: only the ota-net build enables it. no_std + alloc, verify-only (no RNG).
 # Brings its own sha2 0.10 / digest generation; accepted for verify-before-activate (see [features]).
 rsa = { version = "0.9", default-features = false, features = ["sha2"], optional = true }
-# BLE host stack + HCI types (ble-transport). PINNED: esp-wifi 0.15.1's BleConnector implements
-# bt_hci::Transport at bt-hci 0.3.x, and only trouble-host 0.2.4 links against that (0.3+ needs
-# bt-hci 0.5 / the esp-radio migration). Do NOT `cargo update` these two past these versions.
-trouble-host = { version = "=0.2.4", optional = true }
-bt-hci = { version = "=0.3.2", optional = true }
+# BLE host stack + HCI types (ble-transport). esp-radio 0.18's BleConnector implements
+# bt_hci 0.8 traits; trouble-host 0.6 is the release built against bt-hci 0.8 (trouble 0.7
+# moved to bt-hci 0.9 — bump both together with esp-radio).
+trouble-host = { version = "0.6.0", features = ["derive", "default-packet-pool-mtu-255"], optional = true }
+bt-hci = { version = "0.8", optional = true }
 # The trouble gatt_server/gatt_service macros expand to `embassy_sync::...` in this crate's
-# scope; must match the version trouble-host 0.2.4 uses (0.7, same as embassy-net/executor here).
+# scope; must match the version trouble-host 0.6 uses (0.7 — upstream: "update once trouble
+# supports 0.8"; embassy-net here is on the same 0.7 generation).
 embassy-sync = { version = "0.7", optional = true }
+# trouble implements AsGatt/FromGatt for ITS heapless generation (0.9); the rest of this crate
+# is on heapless 0.8, so alias 0.9 just for the GATT characteristic value types in ble.rs.
+heapless-v09 = { package = "heapless", version = "0.9", optional = true }
 postcard = "1.0"
 
-esp-backtrace = { version = "0.15.0", features = ["esp32s3", "panic-handler", "println"] }
-esp-hal = { version = "=1.0.0-rc.0", features = ["esp32s3", "unstable"] }
+esp-backtrace = { version = "0.19.0", features = ["esp32s3", "panic-handler", "println"] }
+esp-hal = { version = "1.1.1", features = ["esp32s3", "unstable", "log-04"] }
 smart-leds = "0.4.0"
-esp-println = { version = "0.13.0", features = ["esp32s3", "log"] }
+esp-println = { version = "0.17.0", features = ["esp32s3", "log-04"] }
 log = "0.4"
 fugit = "0.4.0"
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3"] }
 ws2812-spi = "0.5.1"
 # `wifi`/`ble` are enabled by the udp-transport / ble-transport features, not hardcoded, so a
 # BLE-only build doesn't drag in the Wi-Fi controller. See [features].
-esp-wifi = { version = "0.15.1", features = ["esp32s3", "log-04"] }
-esp-alloc = { version = "0.8.0" }
-embassy-executor = { version = "0.7.0", features = ["executor-thread", "task-arena-size-32768"] }
+esp-radio = { version = "0.18.0", features = ["esp32s3", "log-04", "unstable"] }
+# esp-rtos replaces both esp-hal-embassy (embassy executor/time driver) and esp-wifi's old
+# builtin scheduler: a real priority scheduler implementing esp-radio-rtos-driver. This is the
+# layer whose 0.15.1-era predecessor deadlocked the S3 BT controller handshake.
+esp-rtos = { version = "0.3.0", features = ["esp32s3", "esp-radio", "embassy", "log-04"] }
+esp-alloc = { version = "0.10.0" }
+# Task arena is sized via the EMBASSY_EXECUTOR_TASK_ARENA_SIZE env var since 0.10
+# (set in .cargo/config.toml), replacing the old task-arena-size-* features.
+embassy-executor = "0.10.0"
 embassy-time = "0.5.1"
 embassy-net = { version = "0.9.1", features = ["tcp", "udp", "dhcpv4", "medium-ethernet", "log"] }
-esp-hal-embassy = { version = "0.9.1", features = ["esp32s3", "log-04"] }
 static_cell = { version = "2.1.1", features = ["nightly"] }
 lcd1602-driver = "0.3.0"
 heapless = { version = "0.8", features = ["serde"] }
@@ -84,7 +93,7 @@ x25519-dalek = { version = "2.0.1", default-features = false, features = ["stati
 # The ESP32-S3 AES peripheral has no GCM mode (esp-hal exposes only ECB/CBC/CTR/
 # CFB/OFB), so GCM stays in constant-time software here.
 aes-gcm = { version = "0.10", default-features = false, features = ["aes"] }
-esp-storage = { version = "0.7.0", features = ["esp32s3"] }
+esp-storage = { version = "0.9.0", features = ["esp32s3"] }
 embedded-storage = "0.3.1"
 serde = { version = "1.0.228", features = ["derive"], default-features = false }
 sha2 = { version = "0.11.0", default-features = false }
