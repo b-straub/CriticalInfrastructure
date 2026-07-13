@@ -19,6 +19,7 @@ This project demonstrates that it is now possible to build *impenetrable* embedd
 *   **Memory-Safe Firmware:** 100% Rust (`no_std`) — no buffer overflows, no memory corruption.
 *   **Hardware Cryptographic RBAC:** every command carries a hardware-held **P-256** client signature — from a Mac's **Secure Enclave** (Touch ID) or a **PIV** hardware key — and the device verifies a supervisor→role certificate chain before acting.
 *   **Native client, encrypted envelope:** a **SwiftUI macOS app** drives the device over a raw UDP command protocol — one signed + encrypted envelope (X25519 + AES-GCM + Ed25519), machine-checked in Tamarin — see [`clients/apple`](clients/apple).
+*   **Dual transport, one envelope (hardware-verified):** the same signed envelope also runs over **BLE GATT** — no Wi-Fi/LAN needed (commissioning, network-down, iOS). A physical switch on GPIO10 picks the radio at boot (one at a time, no coex); roles and state are shared between transports — see [`docs/formal/BLE-TRANSPORT.md`](docs/formal/BLE-TRANSPORT.md).
 *   **Hardware-Rooted Device Identity (burned + validated):** the device's X25519/Ed25519 keys are derived at boot from a **read-protected eFuse HMAC key** — the root never touches software and can't be cloned, even with physical access. On the reference board this is burned, with **JTAG disabled**; the secure-download read-lock and flash encryption are documented as the final seal.
 *   **HSM Secure-Boot Signing (validated):** RSA-3072-PSS Secure Boot v2 images are signed by a **PIV** key via OpenSC PKCS#11 — the private key never leaves the token (signed + verified end-to-end). Full Secure Boot v2 enablement (signed ESP-IDF bootloader + the irreversible digest/enable burns) is the documented last step.
 
@@ -99,13 +100,17 @@ Both are standard **PIV** smart cards reached via OpenSC PKCS#11. A Mac's Secure
 
 Wi-Fi credentials and the trusted supervisor key (P-256, 66-hex compressed) are baked in at compile time (`option_env!`) — never stored in the repo. On boot the device prints its public keys over serial and shows its DHCP IP on the LCD.
 
+For a **hybrid Wi-Fi + BLE** image, add `ble-transport` to the cargo features (the deployed
+build uses `udp-transport,ble-transport,efuse-hmac-identity,ota-net`); a switch on GPIO10 then
+selects the radio at boot — details in [`docs/formal/BLE-TRANSPORT.md`](docs/formal/BLE-TRANSPORT.md).
+
 ### 2. Drive it from the macOS app
 
 ```sh
 open clients/apple/CriticalInfra.xcodeproj    # ⌘R (destination: My Mac)
 ```
 
-A native **SwiftUI macOS app** drives the device over UDP — every command is signed by this Mac's **Secure Enclave** (Touch ID) or a **PIV** hardware key, then wrapped in the encrypted envelope. Enter the device's LAN IP (shown on the LCD) and the public keys from the boot log; nothing is hardcoded.
+A native **SwiftUI macOS app** drives the device over UDP or BLE (Transport picker in Settings) — every command is signed by this Mac's **Secure Enclave** (Touch ID) or a **PIV** hardware key, then wrapped in the encrypted envelope. Over UDP, enter the device's LAN IP (shown on the LCD) and the public keys from the boot log; over BLE the app discovers "CriticalInfra" by its GATT service UUID — nothing is hardcoded.
 
 The **supervisor** identity can be a portable **PIV** key (ECCP256 in slot 9c, PIN per command) rather than a Mac-bound enclave key — the same card that signs Secure Boot v2 images (RSA-3072 in slot 9a). Full walkthrough — hardware-key provisioning, the macOS CryptoTokenKit gotchas, Touch ID — in [`clients/apple/README.md`](clients/apple/README.md).
 

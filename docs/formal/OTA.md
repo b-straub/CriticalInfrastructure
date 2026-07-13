@@ -4,6 +4,10 @@ Over-the-air update is the realistic field-update path, and it is the **prerequi
 for Release-mode flash encryption** (Release disables plaintext serial flashing, so
 updates must arrive via OTA — see [`SECURE-BOOT-V2.md`](./SECURE-BOOT-V2.md) Phase C).
 
+> **Hybrid (BLE) builds:** the OTA server runs over Wi-Fi only — the GPIO10 transport
+> switch must be on **UDP** (open/HIGH) and the device reset before a push. See
+> [`BLE-TRANSPORT.md`](./BLE-TRANSPORT.md) §1.
+
 ## How it composes with Secure Boot (what's free)
 
 The IDF second-stage bootloader we already build (`secure-boot/`) does the hard,
@@ -271,3 +275,29 @@ The bootloader does the decrypt-reads to pick the slot (built in). Works with or
 2. ~~Host-side `otadata` write on a secure-download board~~ — ✅ done write-only
    (`ota-switch-slot.sh`); `otatool.py` is unusable here because it reads first.
 3. ~~Flash size~~ — ✅ board is 16 MB; layout needs ≥ 8 MB.
+
+## Recovery — forcing fallback to the other slot (hardware-validated 2026-07-13)
+
+If the **running** build can no longer reach the network (so OTA can't deliver a fix),
+the other A/B slot usually still holds the previous working image. Secure Download Mode
+still permits flash **write/erase** (`--no-stub`; only reads and the stub are blocked),
+so the sealed board can be recovered over serial without any signing:
+
+1. **Identify the active slot** from the boot banner on serial: `OTA: booted from slot N`
+   (slot 0 = `ota_0` @ `0x20000`, slot 1 = `ota_1` @ `0x230000` — `partitions.csv` is the
+   SSOT). ⚠️ Erasing the *inactive* slot instead destroys the good fallback image.
+2. Enter download mode: hold **BOOT**, tap **RESET**, release BOOT.
+3. Erase just the first sector of the **active** slot — the image header dies, Secure
+   Boot verification fails, and the bootloader falls back to the other slot
+   (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`; eFuse anti-rollback is off):
+
+   ```sh
+   esptool --chip esp32s3 --port <uart-port> --no-stub \
+     --before no-reset --after no-reset erase-region 0x230000 0x1000   # slot 1 example
+   ```
+4. Tap RESET — the previous image boots; push the fixed build over OTA as usual.
+
+Serial notes for the sealed board: `cargo espflash monitor` fails in Secure Download Mode
+(it handshakes the chip) — use a dumb tty reader on the CH343 UART port instead. An erased
+slot is simply the target of the next OTA push. Beware: pushing the same broken build twice
+fills **both** slots with it and removes the fallback.
