@@ -155,6 +155,8 @@ async fn main(spawner: Spawner) {
         // otherwise btdm_controller_enable deadlocks waiting for the Wi-Fi radio lock.
         if enable_ble {
             log::info!("Starting Wi-Fi to satisfy coex...");
+            use esp_wifi::wifi::{Configuration, ClientConfiguration};
+            ctrl.set_configuration(&Configuration::Client(ClientConfiguration::default())).unwrap();
             ctrl.start().unwrap();
             log::info!("Wi-Fi started.");
         }
