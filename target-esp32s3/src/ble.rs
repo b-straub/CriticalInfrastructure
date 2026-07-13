@@ -65,7 +65,7 @@ pub async fn ble_task(
     let mut resources: HostResources<DefaultPacketPool, 1, 2> = HostResources::new();
     info!("BLE min 4: trouble_host::new + stack.build");
     let stack = trouble_host::new(controller, &mut resources)
-        .set_random_address(Address::random([0xff, 0x11, 0x22, 0x33, 0x44, 0x55]));
+        .set_random_address(Address::random([0xff, 0x11, 0x22, 0x33, 0x44, 0xff]));
     let Host { mut peripheral, runner, .. } = stack.build();
     info!("BLE min 5: Server::new_with_config");
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
