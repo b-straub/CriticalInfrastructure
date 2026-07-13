@@ -416,4 +416,12 @@ async fn main(spawner: Spawner) {
         }
     }
     } // end #[cfg(feature = "udp-transport")] block
+
+    // If we only spawned the BLE task and bypassed the UDP datagram loop, we must NOT let main() return.
+    // In esp-hal-embassy, if the main task returns, the executor might halt or drop spawned tasks.
+    #[cfg(feature = "ble-transport")]
+    if enable_ble {
+        log::info!("main() reached end of initialization for BLE-only mode, sleeping forever...");
+        core::future::pending::<()>().await;
+    }
 }
