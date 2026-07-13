@@ -154,6 +154,9 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "ble-transport")]
     let ble_connector = if enable_ble {
         use esp_wifi::ble::controller::BleConnector;
+        let free = esp_alloc::HEAP.free_size();
+        let max_block = esp_alloc::HEAP.largest_free_block();
+        info!("Heap before BLE init: {} bytes free, largest block: {} bytes", free, max_block);
         info!("Creating BleConnector synchronously in main after Wi-Fi...");
         Some(BleConnector::new(init, peripherals.BT))
     } else {
