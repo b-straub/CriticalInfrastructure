@@ -121,29 +121,25 @@ async fn main(spawner: Spawner) {
     // Active-LOW, matching the proven pull-up read direction (same as the DHT11 data line): an
     // internal pull-up idles GPIO10 HIGH → UDP/Wi-Fi only. The switch closes GPIO10 to GND → LOW → 
     // BLE + Wi-Fi Coexistence.
-    #[cfg(feature = "ble-transport")]
     let enable_ble = {
-        #[cfg(feature = "udp-transport")]
+        #[cfg(all(feature = "ble-transport", feature = "udp-transport"))]
         let enable_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            // Internal pull-up idles GPIO10 HIGH; the switch closes it to GND to select BLE. Wait past
-            // the ESP32-S3 boot glitch/settle window (some pads float-glitch for ~30-65ms after reset)
-            // before the single read, so a settling pad can't be misread. Pull-up means the pin is
-            // never floating, so with the switch open it reads a solid HIGH (UDP).
             let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
-            // In async main, `Timer::after` is not available until the executor runs. Wait synchronously.
             let delay = esp_hal::delay::Delay::new();
             delay.delay_millis(150);
-            let ble = sel.is_low(); // active-low: GND = BLE; pull-up idle HIGH = UDP (OTA-safe default)
+            let ble = sel.is_low();
             info!(
                 "Transport select: GPIO10 = {} -> {}",
                 if ble { "LOW" } else { "HIGH" },
-                if ble { "BLE + UDP (Coex)" } else { "UDP/Wi-Fi Only" }
+                if ble { "BLE only" } else { "UDP only" }
             );
             ble
         };
-        #[cfg(not(feature = "udp-transport"))]
+        #[cfg(all(feature = "ble-transport", not(feature = "udp-transport")))]
         let enable_ble = true;
+        #[cfg(not(feature = "ble-transport"))]
+        let enable_ble = false;
         enable_ble
     };
 
@@ -157,12 +153,6 @@ async fn main(spawner: Spawner) {
         None
     };
 
-    // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
-    #[cfg(feature = "udp-transport")]
-    let (mut _controller, interfaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
-    #[cfg(feature = "udp-transport")]
-    info!("wifi::new created successfully");
-
     #[cfg(feature = "ble-transport")]
     if let Some(connector) = ble_connector {
         spawner.spawn(ble::ble_task(
@@ -173,9 +163,13 @@ async fn main(spawner: Spawner) {
         )).unwrap();
     }
 
+    // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
     #[cfg(feature = "udp-transport")]
-    {
-    let wifi_interface = interfaces.sta;
+    if !enable_ble {
+        let (mut _controller, interfaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
+        info!("wifi::new created successfully");
+
+        let wifi_interface = interfaces.sta;
 
     let spi_config = SpiConfig::default().with_frequency(esp_hal::time::Rate::from_mhz(3)).with_mode(Mode::_0);
     let spi = Spi::new(peripherals.SPI2, spi_config).expect("SPI new failed")
