@@ -87,10 +87,13 @@ async fn main(spawner: Spawner) {
     // contiguous block into the `.bss` segment due to fragmentation. By splitting it
     // into two blocks, the linker can place them in available SRAM.
     // IMPORTANT: use u32 to force 4-byte alignment; C-blobs will crash on misaligned ptrs!
-    // (68KB not 72KB: esp-rtos/esp-radio 0.18 statics grew .bss slightly; 72KB overflowed the
-    // DRAM region reserved before the main stack by ~0.4KB at link time.)
+    // Region 2 is 48KB (not the old 72KB): the main stack gets whatever DRAM remains after
+    // .bss, and esp-hal 1.1 asserts on it at boot — 68KB left only ~7KB of stack and the
+    // esp-rtos boot path needs ~9KB before esp_hal::init even runs (measured on hardware:
+    // sp=0x3fcd9560 vs bottom=0x3fcd9acc, top=0x3fcdb700). 48KB leaves a ~27KB main stack;
+    // 176KB total heap is still ample for a single radio (no coex).
     static mut HEAP1: core::mem::MaybeUninit<[u32; 32 * 1024]> = core::mem::MaybeUninit::uninit();
-    static mut HEAP2: core::mem::MaybeUninit<[u32; 17 * 1024]> = core::mem::MaybeUninit::uninit();
+    static mut HEAP2: core::mem::MaybeUninit<[u32; 12 * 1024]> = core::mem::MaybeUninit::uninit();
 
     unsafe {
         esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
@@ -100,7 +103,7 @@ async fn main(spawner: Spawner) {
         ));
         esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
             core::ptr::addr_of_mut!(HEAP2).cast::<u8>(),
-            68 * 1024,
+            48 * 1024,
             esp_alloc::MemoryCapability::Internal.into(),
         ));
     }
