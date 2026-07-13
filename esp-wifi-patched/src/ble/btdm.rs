@@ -398,9 +398,12 @@ pub(crate) fn ble_init() {
         if res != 0 {
             panic!("btdm_osi_funcs_register returned {}", res);
         }
-        info!("Calling phy_enable()...");
-        crate::common_adapter::chip_specific::phy_enable();
-        info!("phy_enable() finished!");
+        // NOTE: no phy_enable() here! Pristine esp-wifi 0.15.1 enables the PHY exactly once,
+        // AFTER btdm_controller_init (matching ESP-IDF, where esp_phy_enable runs inside
+        // esp_bt_controller_enable, after periph_module_enable(BT)). phy_enable() is
+        // ref-counted, so an early call here turns the correctly-placed one below into a
+        // no-op — the PHY/BB then gets initialized while the BT module clock is still gated
+        // and btdm_controller_enable waits forever on baseband readiness.
 
         #[cfg(coex)]
         {
@@ -421,7 +424,12 @@ pub(crate) fn ble_init() {
         ble_os_adapter_chip_specific::disable_sleep_mode();
 
         #[cfg(any(esp32c3, esp32s3))]
-        info!("Calling btdm_controller_init..."); let res = btdm_controller_init(&mut cfg as *mut esp_bt_controller_config_t); info!("btdm_controller_init finished with {}", res);
+        let res = {
+            info!("Calling btdm_controller_init...");
+            let res = btdm_controller_init(&mut cfg as *mut esp_bt_controller_config_t);
+            info!("btdm_controller_init finished with {}", res);
+            res
+        };
 
         #[cfg(esp32)]
         let res = btdm_controller_init(
@@ -441,8 +449,9 @@ pub(crate) fn ble_init() {
             crate::binary::include::coex_enable();
         }
 
-        info!("Calling phy_enable() second time...");
+        info!("Calling phy_enable() (once, after controller init — pristine order)...");
         crate::common_adapter::chip_specific::phy_enable();
+        info!("phy_enable() finished!");
 
         #[cfg(esp32)]
         {
