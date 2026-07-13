@@ -86,8 +86,9 @@ async fn main(spawner: Spawner) {
     // Coexistence (Wi-Fi + BLE) requires ~200KB heap, but the linker cannot fit a
     // single 200KB contiguous block into the `.bss` segment due to fragmentation.
     // By splitting it into two blocks, the linker can place them in available SRAM.
-    static mut HEAP1: core::mem::MaybeUninit<[u8; 128 * 1024]> = core::mem::MaybeUninit::uninit();
-    static mut HEAP2: core::mem::MaybeUninit<[u8; 72 * 1024]> = core::mem::MaybeUninit::uninit();
+    // IMPORTANT: use u32 to force 4-byte alignment; C-blobs will crash on misaligned ptrs!
+    static mut HEAP1: core::mem::MaybeUninit<[u32; 32 * 1024]> = core::mem::MaybeUninit::uninit();
+    static mut HEAP2: core::mem::MaybeUninit<[u32; 18 * 1024]> = core::mem::MaybeUninit::uninit();
 
     unsafe {
         esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
