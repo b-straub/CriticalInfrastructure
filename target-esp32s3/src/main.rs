@@ -53,12 +53,12 @@ compile_error!("enable a transport: `udp-transport` and/or `ble-transport`");
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
-    // TEMPORARY: force Trace so esp-wifi's OSI breadcrumbs print (task_create of the BT
-    // controller task, interrupt_handler_set for BT_BB/RWBLE, semphr_take/give, ISR entries).
-    // The last trace before silence tells us whether btdm_controller_enable is spinning on a
-    // semaphore (scheduler alive, radio event missing) or the console itself died (USB PHY).
+    // TEMPORARY (BLE bring-up forensics): build with ESP_LOG="info,esp_wifi=trace" so esp-wifi's
+    // trace!/debug! are compiled in, but start the runtime gate at Info — the UDP/OTA path must
+    // stay quiet (a trace-flooded Wi-Fi boot crawls and endangers OTA-ability on this sealed
+    // device). The gate is raised to Trace only for a BLE-mode boot, after the GPIO10 read below.
     // Revert to init_logger_from_env() once BLE is up.
-    esp_println::logger::init_logger(log::LevelFilter::Trace);
+    esp_println::logger::init_logger(log::LevelFilter::Info);
     info!("Starting...");
     info!("Firmware {} built {}", env!("FW_VERSION"), env!("FW_BUILD"));
     if let Some(raw_hex_str) = option_env!("SUPERVISOR_PUBKEY") {
@@ -144,6 +144,14 @@ async fn main(spawner: Spawner) {
         let enable_ble = false;
         enable_ble
     };
+
+    // TEMPORARY (BLE bring-up forensics, see logger init above): only a BLE boot raises the
+    // runtime gate to Trace, emitting esp-wifi's OSI breadcrumbs (task_create of the BT
+    // controller task, interrupt_handler_set for BT_BB/RWBLE, semphr/queue traffic). The last
+    // trace before silence shows what btdm_controller_enable is blocked on.
+    if enable_ble {
+        log::set_max_level(log::LevelFilter::Trace);
+    }
 
 
 
