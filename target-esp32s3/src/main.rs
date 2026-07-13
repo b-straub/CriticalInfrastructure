@@ -151,12 +151,10 @@ async fn main(spawner: Spawner) {
         enable_ble
     };
 
-    // TEMPORARY (BLE bring-up forensics, see logger init above): only a BLE boot raises the
-    // runtime gate to Trace, emitting esp-radio's OSI breadcrumbs. Drop this (and go back to
-    // init_logger_from_env) once BLE on esp-radio is confirmed on hardware.
-    if enable_ble {
-        log::set_max_level(log::LevelFilter::Trace);
-    }
+    // NOTE: do NOT raise the runtime log gate to Trace in BLE mode. The esp-rtos scheduler
+    // trace-logs every task switch, and those blocking 115200-baud UART writes delay the BT
+    // controller task past its radio deadlines — the host stack reports "advertising" but
+    // nothing is emitted on air (observed on hardware). Radio timing needs a quiet console.
 
 
 
