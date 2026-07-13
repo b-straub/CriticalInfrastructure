@@ -12,15 +12,12 @@ use embassy_time::{Duration, Timer};
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
-#[cfg(feature = "udp-transport")]
 use esp_hal::spi::{
     master::{Config as SpiConfig, Spi},
     Mode,
 };
 use log::info;
-#[cfg(feature = "udp-transport")]
 use smart_leds::{colors, SmartLedsWrite};
-#[cfg(feature = "udp-transport")]
 use ws2812_spi::Ws2812;
 #[cfg(feature = "udp-transport")]
 use static_cell::StaticCell;
@@ -186,6 +183,17 @@ async fn main(spawner: Spawner) {
     // DHT11 data line (GPIO21) — both transports show temp/humidity on LCD line 2.
     let mut dht_pin = esp_hal::gpio::Flex::new(peripherals.GPIO21);
 
+    // WS2812 LED ring (SPI2/GPIO4) — both transports render command colors and the alarm
+    // blink from the shared state (protocol.rs sets COMMAND_OVERRIDE_*, transport-independent).
+    let spi_config = SpiConfig::default()
+        .with_frequency(esp_hal::time::Rate::from_mhz(3))
+        .with_mode(Mode::_0);
+    let spi = Spi::new(peripherals.SPI2, spi_config)
+        .expect("SPI new failed")
+        .with_mosi(peripherals.GPIO4);
+    let mut ws2812 = Ws2812::new(spi);
+    ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+
     // Persisted state is transport-independent: the SAME roles and alarm threshold apply
     // whether a command arrives over UDP or BLE, so load them before the transport split.
     // (This used to live in the UDP branch only — a BLE boot then ran with an empty role
@@ -244,14 +252,6 @@ async fn main(spawner: Spawner) {
         .unwrap();
         log::info!("wifi::new created successfully");
         let wifi_interface = interfaces.station;
-
-    let spi_config = SpiConfig::default().with_frequency(esp_hal::time::Rate::from_mhz(3)).with_mode(Mode::_0);
-    let spi = Spi::new(peripherals.SPI2, spi_config).expect("SPI new failed")
-        .with_mosi(peripherals.GPIO4);
-    let mut ws2812 = Ws2812::new(spi);
-
-    let data = [colors::BLACK; 8];
-    ws2812.write(data.iter().cloned()).unwrap();
 
     use lcd1602_driver::lcd::{Lcd, Basic, Ext};
     use lcd1602_driver::sender::I2cSender;
@@ -465,7 +465,7 @@ async fn main(spawner: Spawner) {
         lcd.write_str_to_cur("BLE starting... ");
 
         let mut shown = 0xFFu8;
-        let mut sensor_tick = true; // read the DHT11 on every 2nd loop pass (2s, like UDP mode)
+        let mut tick: u32 = 0;
         loop {
             let status = ble::BLE_STATUS.load(Ordering::Relaxed);
             if status != shown {
@@ -477,12 +477,21 @@ async fn main(spawner: Spawner) {
                     _ => "BLE starting... ",
                 });
             }
-            sensor_tick = !sensor_tick;
-            if sensor_tick {
-                // Same line-2 format as UDP mode: temp/humidity + build tag.
+
+            // Every 2s (8 ticks): read the DHT11, publish to the shared state the command
+            // handlers read (READ_SENSOR, alarm evaluation), and render LCD line 2 in the
+            // same format as UDP mode.
+            if tick % 8 == 0 {
                 let mut line = heapless::String::<16>::new();
                 if let Some((temp, hum)) = sensor::read_dht11(&mut dht_pin) {
                     let _ = write!(&mut line, "{:.1}C {:.0}%H {}", temp, hum, env!("FW_SHORT"));
+                    unsafe {
+                        crate::state::LAST_TEMP = temp;
+                        crate::state::LAST_RH = hum;
+                        if temp > crate::state::THRESHOLD {
+                            crate::state::ALARM_ACTIVE = true;
+                        }
+                    }
                 } else {
                     let _ = write!(&mut line, "Sensor Error");
                 }
@@ -492,7 +501,27 @@ async fn main(spawner: Spawner) {
                 lcd.set_cursor_pos((0, 1));
                 lcd.write_str_to_cur(&line);
             }
-            embassy_time::Timer::after(embassy_time::Duration::from_millis(1000)).await;
+            tick = tick.wrapping_add(1);
+
+            // LED ring, same semantics as the UDP idle render: command color override wins,
+            // then the alarm blink, else off.
+            unsafe {
+                let now = embassy_time::Instant::now().as_millis();
+                if now < crate::state::COMMAND_OVERRIDE_UNTIL {
+                    let color_copy = crate::state::COMMAND_OVERRIDE_COLOR;
+                    ws2812.write(color_copy.iter().cloned()).unwrap();
+                } else if crate::state::ALARM_ACTIVE {
+                    if (now / 250) % 2 == 0 {
+                        ws2812.write([colors::RED; 8].iter().cloned()).unwrap();
+                    } else {
+                        ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                    }
+                } else {
+                    ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                }
+            }
+
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(250)).await;
         }
     }
 }
