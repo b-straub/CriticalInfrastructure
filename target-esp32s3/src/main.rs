@@ -131,7 +131,7 @@ async fn main(spawner: Spawner) {
             // never floating, so with the switch open it reads a solid HIGH (UDP).
             let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
             // In async main, `Timer::after` is not available until the executor runs. Wait synchronously.
-            let mut delay = esp_hal::delay::Delay::new();
+            let delay = esp_hal::delay::Delay::new();
             delay.delay_millis(150);
             let ble = sel.is_low(); // active-low: GND = BLE; pull-up idle HIGH = UDP (OTA-safe default)
             info!(

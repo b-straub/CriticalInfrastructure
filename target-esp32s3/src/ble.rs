@@ -17,7 +17,7 @@ use embassy_futures::join::join;
 use ed25519_dalek::SigningKey;
 use esp_hal::rng::Rng;
 use esp_wifi::ble::controller::BleConnector;
-use esp_wifi::EspWifiController;
+
 use log::info;
 use trouble_host::prelude::*;
 use x25519_dalek::StaticSecret;
