@@ -158,6 +158,32 @@ async fn main(spawner: Spawner) {
 
 
 
+    // ---- LCD bring-up (both transports; BLE shows link status, UDP shows the IP) ----
+    let mut i2c = {
+        use esp_hal::i2c::master::{Config as I2cConfig, I2c};
+        I2c::new(peripherals.I2C0, I2cConfig::default())
+            .expect("I2C new failed")
+            .with_sda(peripherals.GPIO8)
+            .with_scl(peripherals.GPIO9)
+    };
+    let mut lcd_delay = esp_hal::delay::Delay::new();
+
+    // Robust LCD reset BEFORE the driver init. A warm flash resets the ESP but
+    // not the LCD, which can be left mid-command in 4-bit mode. The lcd1602
+    // driver assumes a cold 8-bit start and only switches to 4-bit once, so it
+    // desyncs and prints garbage after a flash. Per the HD44780 datasheet,
+    // strobe the 0x3 reset nibble three times on the PCF8574 backpack
+    // (P4-7 = data, P3 = backlight, P2 = Enable) to force the controller back to
+    // 8-bit; the driver's normal init then switches it to 4-bit cleanly.
+    lcd_delay.delay_millis(100);
+    for wait_us in [4500u32, 200, 200] {
+        let _ = i2c.write(0x27u8, &[0x3Cu8]); // nibble 0x3, backlight on, Enable high
+        lcd_delay.delay_micros(1);
+        let _ = i2c.write(0x27u8, &[0x38u8]); // Enable low -> latch
+        lcd_delay.delay_micros(wait_us);
+    }
+    lcd_delay.delay_millis(5);
+
     // ---- BLE Transport ----
     #[cfg(feature = "ble-transport")]
     let ble_connector = if enable_ble {
@@ -208,35 +234,12 @@ async fn main(spawner: Spawner) {
     let data = [colors::BLACK; 8];
     ws2812.write(data.iter().cloned()).unwrap();
 
-    use esp_hal::i2c::master::{I2c, Config as I2cConfig};
     use lcd1602_driver::lcd::{Lcd, Basic, Ext};
     use lcd1602_driver::sender::I2cSender;
 
-    let mut i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
-        .expect("I2C new failed")
-        .with_sda(peripherals.GPIO8)
-        .with_scl(peripherals.GPIO9);
-
-    let mut delay = esp_hal::delay::Delay::new();
-
-    // Robust LCD reset BEFORE the driver init. A warm flash resets the ESP but
-    // not the LCD, which can be left mid-command in 4-bit mode. The lcd1602
-    // driver assumes a cold 8-bit start and only switches to 4-bit once, so it
-    // desyncs and prints garbage after a flash. Per the HD44780 datasheet,
-    // strobe the 0x3 reset nibble three times on the PCF8574 backpack
-    // (P4-7 = data, P3 = backlight, P2 = Enable) to force the controller back to
-    // 8-bit; the driver's normal init then switches it to 4-bit cleanly.
-    delay.delay_millis(100);
-    for wait_us in [4500u32, 200, 200] {
-        let _ = i2c.write(0x27u8, &[0x3Cu8]); // nibble 0x3, backlight on, Enable high
-        delay.delay_micros(1);
-        let _ = i2c.write(0x27u8, &[0x38u8]); // Enable low -> latch
-        delay.delay_micros(wait_us);
-    }
-    delay.delay_millis(5);
-
+    // LCD driver over the I2C bus brought up before the transport split.
     let mut sender = I2cSender::new(&mut i2c, 0x27);
-    let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
+    let mut lcd = Lcd::new(&mut sender, &mut lcd_delay, Default::default(), Default::default());
 
     // Set up GPIO21 for DHT11 data line
     use esp_hal::gpio::Flex;
@@ -446,11 +449,44 @@ async fn main(spawner: Spawner) {
     }
     } // end #[cfg(feature = "udp-transport")] block
 
-    // If we only spawned the BLE task and bypassed the UDP datagram loop, we must NOT let main() return.
-    // In esp-hal-embassy, if the main task returns, the executor might halt or drop spawned tasks.
+    // BLE mode: main becomes the display task (and must never return — returning would end
+    // the executor's main task). Line 1 = BLE link status from the shared atomic in `ble`,
+    // line 2 = firmware build tag + a 1Hz heartbeat tick, so reboots and liveness are visible
+    // on the device even though BLE mode has no IP to show.
     #[cfg(feature = "ble-transport")]
     if enable_ble {
-        log::info!("main() reached end of initialization for BLE-only mode, sleeping forever...");
-        core::future::pending::<()>().await;
+        use core::fmt::Write as _;
+        use core::sync::atomic::Ordering;
+        use lcd1602_driver::lcd::{Basic, Ext, Lcd};
+        use lcd1602_driver::sender::I2cSender;
+
+        let mut sender = I2cSender::new(&mut i2c, 0x27);
+        let mut lcd = Lcd::new(&mut sender, &mut lcd_delay, Default::default(), Default::default());
+        lcd.clean_display();
+        lcd.write_str_to_cur("BLE starting... ");
+
+        let mut shown = 0xFFu8;
+        let mut tick = false;
+        loop {
+            let status = ble::BLE_STATUS.load(Ordering::Relaxed);
+            if status != shown {
+                shown = status;
+                lcd.set_cursor_pos((0, 0));
+                lcd.write_str_to_cur(match status {
+                    ble::STATUS_CONNECTED => "BLE connected   ",
+                    ble::STATUS_ADVERTISING => "BLE advertising ",
+                    _ => "BLE starting... ",
+                });
+            }
+            tick = !tick;
+            let mut line = heapless::String::<16>::new();
+            let _ = write!(&mut line, "FW {} {}", env!("FW_SHORT"), if tick { "*" } else { " " });
+            while line.len() < 16 {
+                let _ = line.push(' ');
+            }
+            lcd.set_cursor_pos((0, 1));
+            lcd.write_str_to_cur(&line);
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(1000)).await;
+        }
     }
 }

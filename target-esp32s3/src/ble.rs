@@ -23,6 +23,13 @@ use log::info;
 use trouble_host::prelude::*;
 use x25519_dalek::StaticSecret;
 
+/// BLE link status for the display loop in `main` (BLE mode has no IP to show).
+pub static BLE_STATUS: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(STATUS_STARTING);
+pub const STATUS_STARTING: u8 = 0;
+pub const STATUS_ADVERTISING: u8 = 1;
+pub const STATUS_CONNECTED: u8 = 2;
+
 /// Max application payload per BLE frame (frame = 2 header + payload ≤ char size ~244).
 const MAX_CHUNK: usize = 240;
 /// Characteristic value capacity (frame max = MAX_CHUNK + 2).
@@ -47,8 +54,8 @@ struct ControlService {
     tx: Frame,
 }
 
-/// Never returns — runs the BLE host + GATT server forever. Also drives the LCD (line 1 = BLE
-/// status since there is no IP in BLE mode; line 2 = firmware build tag).
+/// Never returns — runs the BLE host + GATT server forever. Publishes the link state via
+/// [`BLE_STATUS`]; the LCD itself is driven by the display loop at the end of `main`.
 #[embassy_executor::task]
 pub async fn ble_task(
     connector: BleConnector<'static>,
@@ -78,9 +85,11 @@ pub async fn ble_task(
     let app = async {
         loop {
             info!("BLE app: advertising...");
+            BLE_STATUS.store(STATUS_ADVERTISING, core::sync::atomic::Ordering::Relaxed);
             match advertise(&mut peripheral, &server).await {
                 Ok(conn) => {
                     info!("BLE connected");
+                    BLE_STATUS.store(STATUS_CONNECTED, core::sync::atomic::Ordering::Relaxed);
                     serve(&server, &conn, &esp_x25519_secret, &esp_signing_key, &mut rng).await;
                 }
                 Err(e) => info!("BLE advertise error: {:?}", e),
