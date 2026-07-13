@@ -143,11 +143,21 @@ async fn main(spawner: Spawner) {
         enable_ble
     };
 
+    // ---- Initialize Wi-Fi driver to satisfy coex dependencies ----
+    // In a hybrid build, esp-wifi links both radios and coex. Even if we only boot BLE,
+    // btdm_controller_enable hangs if the Wi-Fi driver isn't initialized because coex deadlocks.
+    #[cfg(feature = "udp-transport")]
+    let (mut _controller, interfaces) = {
+        let (ctrl, ifaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
+        log::info!("wifi::new created successfully");
+        (ctrl, ifaces)
+    };
+
     // ---- BLE Transport ----
     #[cfg(feature = "ble-transport")]
     let ble_connector = if enable_ble {
         use esp_wifi::ble::controller::BleConnector;
-        info!("Creating BleConnector synchronously in main BEFORE Wi-Fi...");
+        info!("Creating BleConnector synchronously in main after Wi-Fi...");
         Some(BleConnector::new(init, peripherals.BT))
     } else {
         None
@@ -166,9 +176,6 @@ async fn main(spawner: Spawner) {
     // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
     #[cfg(feature = "udp-transport")]
     if !enable_ble {
-        let (mut _controller, interfaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
-        info!("wifi::new created successfully");
-
         let wifi_interface = interfaces.sta;
 
     let spi_config = SpiConfig::default().with_frequency(esp_hal::time::Rate::from_mhz(3)).with_mode(Mode::_0);
