@@ -147,20 +147,21 @@ async fn main(spawner: Spawner) {
         enable_ble
     };
 
-    // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
-    #[cfg(feature = "udp-transport")]
-    let (mut _controller, interfaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
-
+    // ---- BLE Transport ----
     #[cfg(feature = "ble-transport")]
     let ble_connector = if enable_ble {
         use esp_wifi::ble::controller::BleConnector;
-        let free = esp_alloc::HEAP.free();
-        info!("Heap before BLE init: {} bytes free", free);
-        info!("Creating BleConnector synchronously in main after Wi-Fi...");
+        info!("Creating BleConnector synchronously in main BEFORE Wi-Fi...");
         Some(BleConnector::new(init, peripherals.BT))
     } else {
         None
     };
+
+    // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
+    #[cfg(feature = "udp-transport")]
+    let (mut _controller, interfaces) = esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
+    #[cfg(feature = "udp-transport")]
+    info!("wifi::new created successfully");
 
     #[cfg(feature = "ble-transport")]
     if let Some(connector) = ble_connector {
