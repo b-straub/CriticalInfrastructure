@@ -16,7 +16,7 @@ udp-transport = ["esp-wifi/wifi", "dep:p256"]
 # envelope. Client auth is still P-256. See docs/formal/UDP-TRANSPORT.md (transport-independent
 # envelope). A hybrid build (udp+ble) links both radios; a `--no-default-features --features
 # ble-transport` build links esp-wifi BLE-only (no Wi-Fi, no coex) for the spare-board bring-up test.
-ble-transport = ["esp-wifi/ble", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync", "dep:p256"]
+ble-transport = ["esp-wifi/ble", "esp-wifi/coex", "dep:trouble-host", "dep:bt-hci", "dep:embassy-sync", "dep:p256"]
 
 # Derive the device identity from a read-protected eFuse HMAC key via the
 # hardware HMAC-SHA256 peripheral (the key never leaves hardware). Requires the
@@ -89,3 +89,4 @@ embedded-storage = "0.3.1"
 serde = { version = "1.0.228", features = ["derive"], default-features = false }
 sha2 = { version = "0.11.0", default-features = false }
 critical-section = "1.2.0"
+
