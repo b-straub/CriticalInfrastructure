@@ -33,7 +33,12 @@ INI="$(key_ini "$NAME")"; PUB="$(key_pub "$NAME")"; DIG="$(key_digest "$NAME")"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 note "1/3 read the on-card public key -> $PUB"
-OPENSC_DRIVER="$DRIVER" pkcs11-tool --module "$MODULE" --read-object --type pubkey --label "$PUBLABEL" -o "$TMP/pub.der" \
+# Only force an OpenSC card driver when one was actually requested (--driver, e.g.
+# PIV-II for the backup token). Setting OPENSC_DRIVER to the EMPTY string — as the
+# main token's blank $DRIVER did — makes OpenSC fail the read with "object not
+# found" even though the key is present; leaving it unset uses the right driver.
+if [ -n "$DRIVER" ]; then export OPENSC_DRIVER="$DRIVER"; fi
+pkcs11-tool --module "$MODULE" --read-object --type pubkey --label "$PUBLABEL" -o "$TMP/pub.der" \
   || die "could not read '$PUBLABEL' — card inserted and key generated (keyroost)?"
 openssl rsa -pubin -inform DER -in "$TMP/pub.der" -pubout -out "$PUB"
 openssl rsa -pubin -in "$PUB" -noout -text 2>/dev/null | head -1 || true
