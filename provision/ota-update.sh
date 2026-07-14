@@ -40,3 +40,6 @@ echo
 echo "Done. The device installs it into the inactive slot and reboots into it."
 echo "Confirm on the LCD: line 2 build tag (HHMM) changes to this build's time;"
 echo "or on serial: 'Firmware <hash> built ...' shows the new hash."
+echo
+echo "Need the device's public keys for the app (X25519 / Ed25519)? OTA is network-only"
+echo "and doesn't read serial — grab them with:  provision/show-device-keys.sh"
