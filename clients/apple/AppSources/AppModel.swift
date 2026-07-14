@@ -20,6 +20,9 @@ final class AppModel {
     var showShowcase = false
     /// Compressed pubkey of an inserted PIV / hardware key, if any.
     var hardwareKeyPubHex: String?
+    /// Name of the inserted token's key, from its paired certificate's subject
+    /// (e.g. "CriticalInfra Supervisor"), if any.
+    var hardwareKeyName: String?
     /// True while acting via a hardware key (its device role is enforced remotely).
     var hardwareMode = false
 
@@ -31,6 +34,7 @@ final class AppModel {
         showConfig = cfg.needsSetup
         availableRoles = Self.loadAvailableRoles()
         hardwareKeyPubHex = PIVSigner.detect()
+        hardwareKeyName = PIVSigner.tokenKeyName()
     }
 
     private static func loadAvailableRoles() -> [Role] {
@@ -83,10 +87,14 @@ final class AppModel {
         lastResponse = nil
         availableRoles = Self.loadAvailableRoles()
         hardwareKeyPubHex = PIVSigner.detect()
+        hardwareKeyName = PIVSigner.tokenKeyName()
     }
 
     /// Re-scan for an inserted hardware key.
-    func refreshHardware() { hardwareKeyPubHex = PIVSigner.detect() }
+    func refreshHardware() {
+        hardwareKeyPubHex = PIVSigner.detect()
+        hardwareKeyName = PIVSigner.tokenKeyName()
+    }
 
     /// Act via the inserted hardware key. Its device role is enforced by the
     /// device (discover it with WHOAMI); nothing about the role is known locally.

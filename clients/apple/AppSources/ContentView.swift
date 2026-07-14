@@ -192,6 +192,7 @@ private struct IdentityPicker: View {
                     if let hw = model.hardwareKeyPubHex {
                         HardwareCard(
                             pubkey: hw,
+                            keyName: model.hardwareKeyName,
                             onSupervisor: { model.useHardwareKeyAsSupervisor() },
                             onOperational: { model.useHardwareKey() }
                         )
@@ -237,7 +238,7 @@ private struct SupervisorPanel: View {
                 } label: {
                     Label(
                         model.activeIsHardware
-                            ? "Hardware supervisor key — bake as SUPERVISOR_PUBKEY"
+                            ? "Hardware supervisor key “\(model.hardwareKeyName ?? "unnamed")” — bake as SUPERVISOR_PUBKEY"
                             : "Supervisor key — bake as SUPERVISOR_PUBKEY",
                         systemImage: model.activeIsHardware ? "key.card" : "cpu"
                     )
@@ -534,6 +535,7 @@ private extension View {
 
 private struct HardwareCard: View {
     let pubkey: String
+    var keyName: String?
     let onSupervisor: () -> Void
     let onOperational: () -> Void
 
@@ -547,7 +549,7 @@ private struct HardwareCard: View {
                     .background(Color.indigo.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .shadow(color: .indigo.opacity(0.35), radius: 4, y: 2)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Hardware Key").font(.headline)
+                    Text(keyName ?? "Hardware Key").font(.headline)
                     Text("PIV smart card — PIN per command").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -612,7 +614,10 @@ private struct HardwarePanel: View {
                 GroupBox {
                     KeyCard(pubkey: pk)
                 } label: {
-                    Label("Card public key — provision as a role", systemImage: "cpu")
+                    Label(
+                        "Card key “\(model.hardwareKeyName ?? "unnamed")” — provision as a role",
+                        systemImage: "cpu"
+                    )
                 }
             }
 
