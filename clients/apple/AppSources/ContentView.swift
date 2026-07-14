@@ -112,6 +112,38 @@ private struct ConfigForm: View {
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
             }
+
+            Section {
+                TextField("This device's name", text: $model.config.deviceName, prompt: Text(Command.localDeviceLabel()))
+                    .autocorrectionDisabled()
+            } header: {
+                Text("Identity")
+            } footer: {
+                Text("Used as the key label when this device enrolls a role (LIST_ROLES shows role@\(model.resolvedDeviceLabel)). Firmware charset [A-Za-z0-9._-], 16 chars.")
+            }
+
+            if let hw = model.hardwareKeyPubHex {
+                Section {
+                    TextField(
+                        "Token nickname",
+                        text: Binding(
+                            get: { model.config.tokenNicknames[hw] ?? "" },
+                            set: { model.setTokenNickname($0, forPubkey: hw) }
+                        ),
+                        prompt: Text(model.hardwareCertName ?? "e.g. ESP32_S3_Master")
+                    )
+                    .autocorrectionDisabled()
+                    Text(hw)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } header: {
+                    Text("Inserted hardware key")
+                } footer: {
+                    Text("The card carries no editable name, so this nickname (kept per key) is what shows in the app and prefills the key label when you provision this token as a role.")
+                }
+            }
             #if os(macOS)
             Section("Provisioning") {
                 HStack {
@@ -283,10 +315,9 @@ private struct SupervisorPanel: View {
                     if let hw = model.hardwareKeyPubHex {
                         Button {
                             externalPubkey = hw
-                            // Prefill the label from the token key's certificate name
-                            // (e.g. "CriticalInfra Supervisor") — the key lives on the
-                            // token, not on this device.
-                            if externalLabel.isEmpty, let name = PIVSigner.tokenKeyName() {
+                            // Prefill the label from the token's display name — the
+                            // Settings nickname if set, else its certificate subject.
+                            if externalLabel.isEmpty, let name = model.hardwareKeyName {
                                 externalLabel = Command.sanitizeLabel(name)
                             }
                         } label: {

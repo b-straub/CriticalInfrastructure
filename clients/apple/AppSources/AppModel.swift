@@ -20,9 +20,17 @@ final class AppModel {
     var showShowcase = false
     /// Compressed pubkey of an inserted PIV / hardware key, if any.
     var hardwareKeyPubHex: String?
-    /// Name of the inserted token's key, from its paired certificate's subject
-    /// (e.g. "CriticalInfra Supervisor"), if any.
-    var hardwareKeyName: String?
+    /// Certificate subject of the inserted token's key (e.g. "CriticalInfra
+    /// Supervisor"), if any — the on-card name.
+    var hardwareCertName: String?
+    /// Display name for the inserted token: the user's nickname (Settings) if set,
+    /// else the on-card certificate subject.
+    var hardwareKeyName: String? {
+        if let hw = hardwareKeyPubHex, let nick = config.tokenNicknames[hw], !nick.isEmpty {
+            return nick
+        }
+        return hardwareCertName
+    }
     /// True while acting via a hardware key (its device role is enforced remotely).
     var hardwareMode = false
 
@@ -34,7 +42,7 @@ final class AppModel {
         showConfig = cfg.needsSetup
         availableRoles = Self.loadAvailableRoles()
         hardwareKeyPubHex = PIVSigner.detect()
-        hardwareKeyName = PIVSigner.tokenKeyName()
+        hardwareCertName = PIVSigner.tokenKeyName()
     }
 
     private static func loadAvailableRoles() -> [Role] {
@@ -87,13 +95,31 @@ final class AppModel {
         lastResponse = nil
         availableRoles = Self.loadAvailableRoles()
         hardwareKeyPubHex = PIVSigner.detect()
-        hardwareKeyName = PIVSigner.tokenKeyName()
+        hardwareCertName = PIVSigner.tokenKeyName()
     }
 
     /// Re-scan for an inserted hardware key.
     func refreshHardware() {
         hardwareKeyPubHex = PIVSigner.detect()
-        hardwareKeyName = PIVSigner.tokenKeyName()
+        hardwareCertName = PIVSigner.tokenKeyName()
+    }
+
+    /// This device's key label for enclave-key role enrollment: the Settings
+    /// override if set, else the sanitized OS device name.
+    var resolvedDeviceLabel: String {
+        let override = config.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return override.isEmpty ? Command.localDeviceLabel() : Command.sanitizeLabel(override)
+    }
+
+    /// Set (or clear, with "") the nickname for a hardware key by its pubkey.
+    func setTokenNickname(_ nickname: String, forPubkey pubkey: String) {
+        let trimmed = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            config.tokenNicknames.removeValue(forKey: pubkey)
+        } else {
+            config.tokenNicknames[pubkey] = trimmed
+        }
+        config.save()
     }
 
     /// Act via the inserted hardware key. Its device role is enforced by the
@@ -143,7 +169,7 @@ final class AppModel {
                     role: role.rawValue,
                     newPublicKeyHex: roleKey.publicKeyHex,
                     supervisor: supervisor,
-                    label: Command.localDeviceLabel() // enclave key lives here -> device name
+                    label: resolvedDeviceLabel // enclave key lives here -> this device's name
                 )
                 let client = DeviceClient(config: cfg, signer: supervisor)
                 lastResponse = await client.send(cmd)
