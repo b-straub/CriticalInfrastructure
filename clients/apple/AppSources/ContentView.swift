@@ -219,7 +219,9 @@ private struct IdentityPicker: View {
 
                 VStack(spacing: 10) {
                     ForEach(model.availableRoles, id: \.self) { role in
-                        IdentityCard(role: role) { model.select(role) }
+                        IdentityCard(role: role, deviceLabel: model.resolvedDeviceLabel) {
+                            model.select(role)
+                        }
                     }
                     if let hw = model.hardwareKeyPubHex {
                         HardwareCard(
@@ -417,6 +419,7 @@ struct CenteredColumn<Content: View>: View {
 
 private struct IdentityCard: View {
     let role: Role
+    var deviceLabel: String = ""
     let action: () -> Void
     @State private var hover = false
 
@@ -425,7 +428,17 @@ private struct IdentityCard: View {
             HStack(spacing: 14) {
                 RoleBadge(role: role, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(role.rawValue).font(.headline)
+                    HStack(spacing: 6) {
+                        Text(role.rawValue).font(.headline)
+                        if !deviceLabel.isEmpty {
+                            Text(deviceLabel)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(.quaternary, in: Capsule())
+                        }
+                    }
                     Text(role.blurb).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
