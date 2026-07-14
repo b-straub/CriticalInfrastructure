@@ -137,13 +137,13 @@ final class ShowcaseCatalogTests: XCTestCase {
         XCTAssertNil(Command.parseRolesResponse("Signature verification failed or Unknown Role"))
         XCTAssertEqual(
             Command.parseRolesResponse("ROLES:Admin@Mac:03abc,Observer@iPad-01:02def,"),
-            [Command.DeviceRole(name: "Admin", label: "Mac"),
-             Command.DeviceRole(name: "Observer", label: "iPad-01")]
+            [Command.DeviceRole(name: "Admin", label: "Mac", pubkeyHex: "03abc"),
+             Command.DeviceRole(name: "Observer", label: "iPad-01", pubkeyHex: "02def")]
         )
         // legacy unlabeled entry
         XCTAssertEqual(
             Command.parseRolesResponse("ROLES:Admin:03abc,"),
-            [Command.DeviceRole(name: "Admin", label: "")]
+            [Command.DeviceRole(name: "Admin", label: "", pubkeyHex: "03abc")]
         )
     }
 

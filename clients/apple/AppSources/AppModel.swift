@@ -242,6 +242,18 @@ final class AppModel {
             .map { $0.label.isEmpty ? "unlabeled" : $0.label }
     }
 
+    /// Whether THIS device's local enclave key for `role` is one the device actually trusts —
+    /// matched by PUBKEY against the last LIST_ROLES. This is the real "can I act as this here?"
+    /// test: a same-named local key with a different pubkey (e.g. registered on another device)
+    /// is rejected. nil = not scanned yet or no local key. Operational roles only (the supervisor
+    /// is validated against the baked SUPERVISOR_PUBKEY, not the role table).
+    func deviceAccepts(_ role: Role) -> Bool? {
+        guard role != .supervisor, let dr = deviceRoles,
+              let localPk = EnclaveSigner.publicKeyHex(id: role.rawValue)?.lowercased()
+        else { return nil }
+        return dr.contains { $0.name == role.rawValue && $0.pubkeyHex.lowercased() == localPk }
+    }
+
     func listRoles() {
         guard let supervisor = signer, activeRole == .supervisor else { return }
         let cfg = config

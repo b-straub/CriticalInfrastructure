@@ -246,6 +246,7 @@ private struct IdentityPicker: View {
                 VStack(spacing: 10) {
                     ForEach(model.availableRoles, id: \.self) { role in
                         IdentityCard(role: role, deviceLabel: model.resolvedDeviceLabel,
+                                     accepted: model.deviceAccepts(role),
                                      onForget: { model.forgetIdentity(role) }) {
                             model.select(role)
                         }
@@ -503,55 +504,79 @@ func copyToPasteboard(_ s: String) {
 private struct IdentityCard: View {
     let role: Role
     var deviceLabel: String = ""
+    /// true = device trusts this key (matched by pubkey in last scan); false = it doesn't;
+    /// nil = not scanned / not applicable.
+    var accepted: Bool? = nil
     var onForget: (() -> Void)? = nil
     let action: () -> Void
     @State private var hover = false
     @State private var confirmForget = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                RoleBadge(role: role, size: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(role.rawValue).font(.headline)
-                        if !deviceLabel.isEmpty {
-                            Text(deviceLabel)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(.quaternary, in: Capsule())
+        HStack(spacing: 12) {
+            // Tapping the card body selects the identity.
+            Button(action: action) {
+                HStack(spacing: 14) {
+                    RoleBadge(role: role, size: 44)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(role.rawValue).font(.headline)
+                            if !deviceLabel.isEmpty {
+                                Text(deviceLabel)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(.quaternary, in: Capsule())
+                            }
+                            if let accepted {
+                                Label(accepted ? "on device" : "not on device",
+                                      systemImage: accepted ? "checkmark.seal.fill" : "xmark.seal")
+                                    .labelStyle(.titleAndIcon)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(accepted ? Color.green : .orange)
+                            }
                         }
+                        Text(accepted == false ? "This device's key isn't registered on the device — the supervisor must add it." : role.blurb)
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    Text(role.blurb).font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                 }
-                Spacer()
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Visible per-item menu (Apple's standard for row actions) — no hidden long-press.
+            if onForget != nil {
+                Menu {
+                    Button(role: .destructive) { confirmForget = true } label: {
+                        Label("Forget this identity", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+            } else {
                 Image(systemName: "chevron.right")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(14)
-            .background(
-                hover ? AnyShapeStyle(role.tint.opacity(0.12)) : AnyShapeStyle(.quaternary.opacity(0.5)),
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(hover ? role.tint.opacity(0.5) : .clear, lineWidth: 1)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(14)
+        .background(
+            hover ? AnyShapeStyle(role.tint.opacity(0.12)) : AnyShapeStyle(.quaternary.opacity(0.5)),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(hover ? role.tint.opacity(0.5) : .clear, lineWidth: 1)
+        )
         .onHover { hover = $0 }
         .animation(.easeOut(duration: 0.12), value: hover)
-        .contextMenu {
-            if onForget != nil {
-                Button(role: .destructive) { confirmForget = true } label: {
-                    Label("Forget this identity", systemImage: "trash")
-                }
-            }
-        }
         .confirmationDialog(
             "Forget the “\(role.rawValue)” key on this device?",
             isPresented: $confirmForget, titleVisibility: .visible

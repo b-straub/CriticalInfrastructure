@@ -47,15 +47,18 @@ public enum Command {
         return String(String(cleaned).prefix(16))
     }
 
-    /// A role as the DEVICE reports it in LIST_ROLES: a role name + its key label.
+    /// A role as the DEVICE reports it in LIST_ROLES: role name + key label + the trusted pubkey.
     public struct DeviceRole: Equatable, Sendable {
         public let name: String
-        public let label: String   // "" for legacy unlabeled entries
-        public init(name: String, label: String) { self.name = name; self.label = label }
+        public let label: String       // "" for legacy unlabeled entries
+        public let pubkeyHex: String   // 66-hex compressed P-256 key the device trusts for this role
+        public init(name: String, label: String, pubkeyHex: String = "") {
+            self.name = name; self.label = label; self.pubkeyHex = pubkeyHex
+        }
     }
 
     /// Parse a LIST_ROLES device response into the roles actually stored on the device.
-    /// `"No roles found"` → `[]`; `"ROLES:Admin@Mac:03..,Observer@Mac:02.."` → the pairs.
+    /// `"No roles found"` → `[]`; `"ROLES:Admin@Mac:03..,Observer@Mac:02.."` → the entries.
     /// Returns nil when the string isn't a roles response (so callers don't clobber state on
     /// an error/unrelated reply). One role can appear multiple times with different labels.
     public static func parseRolesResponse(_ response: String) -> [DeviceRole]? {
@@ -66,12 +69,14 @@ public enum Command {
         var out: [DeviceRole] = []
         for entry in body.split(separator: ",") where !entry.isEmpty {
             // entry = "name@label:pk" or (legacy) "name:pk" — the pk follows the first ':'.
-            let head = entry.split(separator: ":", maxSplits: 1).first.map(String.init) ?? String(entry)
+            let parts = entry.split(separator: ":", maxSplits: 1)
+            let head = parts.first.map(String.init) ?? String(entry)
+            let pk = parts.count > 1 ? String(parts[1]) : ""
             if let at = head.firstIndex(of: "@") {
                 out.append(DeviceRole(name: String(head[..<at]),
-                                      label: String(head[head.index(after: at)...])))
+                                      label: String(head[head.index(after: at)...]), pubkeyHex: pk))
             } else {
-                out.append(DeviceRole(name: head, label: ""))
+                out.append(DeviceRole(name: head, label: "", pubkeyHex: pk))
             }
         }
         return out
