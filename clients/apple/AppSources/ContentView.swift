@@ -13,6 +13,7 @@ struct ContentView: View {
         NavigationStack {
             content
                 .navigationTitle(title)
+                .inlineNavTitle()
                 .toolbar {
                     if model.showShowcase || model.showConfig {
                         ToolbarItem(placement: .navigation) {
@@ -55,7 +56,9 @@ struct ContentView: View {
                     }
                 }
         }
+        #if os(macOS)
         .frame(minWidth: 500, minHeight: 480)
+        #endif
     }
 
     @ViewBuilder private var content: some View {
@@ -101,6 +104,7 @@ private struct ConfigForm: View {
                 case .udp:
                     TextField("Device IP", text: $model.config.host)
                         .autocorrectionDisabled()
+                        .platformFieldKeyboard(.numeric)
                 case .ble:
                     TextField("Device name", text: $model.config.bleName)
                         .autocorrectionDisabled()
@@ -108,9 +112,11 @@ private struct ConfigForm: View {
                 TextField("X25519 (ROM) key", text: $model.config.espX25519PubHex)
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
+                    .platformFieldKeyboard(.ascii)
                 TextField("Ed25519 sig key", text: $model.config.espSigPubHex)
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
+                    .platformFieldKeyboard(.ascii)
             }
 
             Section {
@@ -197,9 +203,9 @@ private struct IdentityPicker: View {
     var body: some View {
         if model.availableRoles.isEmpty && model.hardwareKeyPubHex == nil {
             ContentUnavailableView {
-                Label("No identity on this Mac", systemImage: "person.crop.circle.badge.questionmark")
+                Label("No identity on this device", systemImage: "person.crop.circle.badge.questionmark")
             } description: {
-                Text("Create the Supervisor key in this Mac's Secure Enclave (then bake its public key into the firmware), or insert a PIV hardware key.")
+                Text("Create the Supervisor key in this device's Secure Enclave (then bake its public key into the firmware), or insert a PIV hardware key.")
             } actions: {
                 Button("Register Supervisor") { model.registerSupervisor() }
                     .buttonStyle(.borderedProminent)
@@ -305,12 +311,10 @@ private struct SupervisorPanel: View {
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Provision a P-256 public key from a hardware key or another Mac — the private key stays where it lives.")
+                    Text("Provision a P-256 public key from a hardware key or another device — the private key stays where it lives.")
                         .font(.caption).foregroundStyle(.secondary)
                     TextField("Public key (66 hex)", text: $externalPubkey)
-                        .font(.callout.monospaced())
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
+                        .hexFieldStyle()
                     TextField("Key label — device or token name (required)", text: $externalLabel)
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
@@ -364,17 +368,15 @@ private struct OperatorPanel: View {
     @Bindable var model: AppModel
     let role: Role
 
-    private struct Cmd { let title: String; let icon: String; let tint: Color; let cmd: String }
-
-    private var commands: [Cmd] {
-        var c = [Cmd(title: "Read Sensor", icon: "thermometer.medium", tint: .green, cmd: Command.readSensor)]
+    private var commands: [CommandItem] {
+        var c = [CommandItem(title: "Read Sensor", icon: "thermometer.medium", tint: .green, cmd: Command.readSensor)]
         if role.operationalRank >= 2 {
-            c.append(Cmd(title: "Threshold 20°", icon: "arrow.down.to.line", tint: .orange, cmd: Command.setThreshold(20)))
-            c.append(Cmd(title: "Threshold 30°", icon: "arrow.up.to.line", tint: .orange, cmd: Command.setThreshold(30)))
+            c.append(CommandItem(title: "Threshold 20°", icon: "arrow.down.to.line", tint: .orange, cmd: Command.setThreshold(20)))
+            c.append(CommandItem(title: "Threshold 30°", icon: "arrow.up.to.line", tint: .orange, cmd: Command.setThreshold(30)))
         }
         if role.operationalRank >= 3 {
-            c.append(Cmd(title: "Clear Alarm", icon: "bell.slash.fill", tint: .red, cmd: Command.clearAlarm))
-            c.append(Cmd(title: "Test Alarm", icon: "bell.badge.fill", tint: .red, cmd: Command.colorRed))
+            c.append(CommandItem(title: "Clear Alarm", icon: "bell.slash.fill", tint: .red, cmd: Command.clearAlarm))
+            c.append(CommandItem(title: "Test Alarm", icon: "bell.badge.fill", tint: .red, cmd: Command.colorRed))
         }
         return c
     }
@@ -384,11 +386,7 @@ private struct OperatorPanel: View {
             RoleHero(role: role)
 
             GroupBox {
-                VStack(spacing: 10) {
-                    ForEach(commands, id: \.title) { c in
-                        CommandButton(title: c.title, icon: c.icon, tint: c.tint) { model.send(c.cmd) }
-                    }
-                }
+                CommandGrid(commands: commands) { model.send($0) }
             } label: {
                 Label("Commands", systemImage: "square.grid.2x2.fill")
             }
@@ -406,16 +404,68 @@ private struct OperatorPanel: View {
 struct CenteredColumn<Content: View>: View {
     var maxWidth: CGFloat = 560
     @ViewBuilder let content: Content
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSize
+    #endif
+
+    private var pad: CGFloat {
+        #if os(iOS)
+        hSize == .compact ? 16 : 24   // tighter gutters on iPhone
+        #else
+        24
+        #endif
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) { content }
+            VStack(alignment: .leading, spacing: 18) { content }
                 .frame(maxWidth: maxWidth)
                 .frame(maxWidth: .infinity)
-                .padding(24)
+                .padding(pad)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 }
+
+// MARK: - Cross-platform view helpers
+
+extension View {
+    /// Inline navigation title on iOS/iPadOS (saves the large-title vertical space);
+    /// no-op on macOS where the modifier doesn't exist.
+    @ViewBuilder func inlineNavTitle() -> some View {
+        #if os(iOS)
+        self.navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+
+    /// A monospaced key/hex field with the right mobile keyboard hygiene.
+    @ViewBuilder func hexFieldStyle() -> some View {
+        self.font(.callout.monospaced())
+            .textFieldStyle(.roundedBorder)
+            .autocorrectionDisabled()
+            .platformFieldKeyboard(.ascii)
+    }
+
+    /// Set an appropriate iOS keyboard + no autocapitalization; no-op on macOS
+    /// (where `UIKeyboardType` doesn't exist).
+    @ViewBuilder func platformFieldKeyboard(_ kind: FieldKeyboard) -> some View {
+        #if os(iOS)
+        switch kind {
+        case .ascii:
+            self.keyboardType(.asciiCapable).textInputAutocapitalization(.never)
+        case .numeric:
+            self.keyboardType(.numbersAndPunctuation).textInputAutocapitalization(.never)
+        }
+        #else
+        self
+        #endif
+    }
+}
+
+/// Cross-platform keyboard hint (maps to `UIKeyboardType` on iOS, ignored on macOS).
+enum FieldKeyboard { case ascii, numeric }
 
 private struct IdentityCard: View {
     let role: Role
@@ -508,11 +558,47 @@ private struct CommandButton: View {
         Button(action: action) {
             Label(title, systemImage: icon)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+                .padding(.vertical, 8)   // roomier tap target on touch
         }
         .buttonStyle(.bordered)
         .controlSize(.large)
         .tint(tint)
+    }
+}
+
+/// A command model shared by the operator / hardware panels.
+struct CommandItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let icon: String
+    let tint: Color
+    let cmd: String
+}
+
+/// Commands laid out in an adaptive grid: two columns where there's room
+/// (iPad / Mac / landscape), a single column on a compact iPhone width.
+private struct CommandGrid: View {
+    let commands: [CommandItem]
+    let run: (String) -> Void
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSize
+    #endif
+
+    private var columns: [GridItem] {
+        #if os(iOS)
+        let count = hSize == .compact ? 1 : 2
+        #else
+        let count = 2
+        #endif
+        return Array(repeating: GridItem(.flexible(), spacing: 10), count: count)
+    }
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(commands) { c in
+                CommandButton(title: c.title, icon: c.icon, tint: c.tint) { run(c.cmd) }
+            }
+        }
     }
 }
 
@@ -625,15 +711,13 @@ private struct HardwareCard: View {
 private struct HardwarePanel: View {
     @Bindable var model: AppModel
 
-    private struct Cmd { let title: String; let icon: String; let tint: Color; let cmd: String }
-
-    private let commands: [Cmd] = [
-        Cmd(title: "Identify (WHOAMI)", icon: "person.text.rectangle", tint: .indigo, cmd: Command.whoami),
-        Cmd(title: "Read Sensor", icon: "thermometer.medium", tint: .green, cmd: Command.readSensor),
-        Cmd(title: "Threshold 20°", icon: "arrow.down.to.line", tint: .orange, cmd: Command.setThreshold(20)),
-        Cmd(title: "Threshold 30°", icon: "arrow.up.to.line", tint: .orange, cmd: Command.setThreshold(30)),
-        Cmd(title: "Clear Alarm", icon: "bell.slash.fill", tint: .red, cmd: Command.clearAlarm),
-        Cmd(title: "Test Alarm", icon: "bell.badge.fill", tint: .red, cmd: Command.colorRed)
+    private let commands: [CommandItem] = [
+        CommandItem(title: "Identify (WHOAMI)", icon: "person.text.rectangle", tint: .indigo, cmd: Command.whoami),
+        CommandItem(title: "Read Sensor", icon: "thermometer.medium", tint: .green, cmd: Command.readSensor),
+        CommandItem(title: "Threshold 20°", icon: "arrow.down.to.line", tint: .orange, cmd: Command.setThreshold(20)),
+        CommandItem(title: "Threshold 30°", icon: "arrow.up.to.line", tint: .orange, cmd: Command.setThreshold(30)),
+        CommandItem(title: "Clear Alarm", icon: "bell.slash.fill", tint: .red, cmd: Command.clearAlarm),
+        CommandItem(title: "Test Alarm", icon: "bell.badge.fill", tint: .red, cmd: Command.colorRed)
     ]
 
     var body: some View {
@@ -666,11 +750,7 @@ private struct HardwarePanel: View {
             }
 
             GroupBox {
-                VStack(spacing: 10) {
-                    ForEach(commands, id: \.title) { c in
-                        CommandButton(title: c.title, icon: c.icon, tint: c.tint) { model.send(c.cmd) }
-                    }
-                }
+                CommandGrid(commands: commands) { model.send($0) }
             } label: {
                 Label("Commands", systemImage: "square.grid.2x2.fill")
             }
