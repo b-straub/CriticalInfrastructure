@@ -5,8 +5,13 @@ import Foundation
 /// certificate and re-verifies it on every command by that role (RAM-tamper
 /// guard), so the cert must be signed by the supervisor key.
 public enum Provisioning {
-    /// Build `ADD_ROLE <role> <newPublicKeyHex> <certSigHex>`, where the
+    /// Build `ADD_ROLE <role> <newPublicKeyHex> <certSigHex> <label>`, where the
     /// supervisor signs the certificate `ROLE:<role>;PUBKEY:<newPublicKeyHex>`.
+    /// The key label is REQUIRED (the firmware rejects unlabeled grants) and names
+    /// where the key lives — a device name for enclave keys, the token/cert name
+    /// for PIV hardware keys. It is metadata outside the certificate (the
+    /// supervisor-signed command authenticates it) so existing certificates stay
+    /// valid.
     ///
     /// Prompts Touch ID once here (the certificate). The returned command is then
     /// sent via `DeviceClient(signer: supervisor)`, which signs the command itself
@@ -14,10 +19,13 @@ public enum Provisioning {
     public static func addRoleCommand(
         role: String,
         newPublicKeyHex: String,
-        supervisor: CommandSigner
+        supervisor: CommandSigner,
+        label: String
     ) throws -> String {
         let cert = Data("ROLE:\(role);PUBKEY:\(newPublicKeyHex)".utf8)
         let certSig = try supervisor.sign(cert)
-        return Command.addRole(name: role, pubkeyHex: newPublicKeyHex, certSigHex: certSig.hexString)
+        return Command.addRole(
+            name: role, pubkeyHex: newPublicKeyHex, certSigHex: certSig.hexString, label: label
+        )
     }
 }

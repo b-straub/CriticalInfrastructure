@@ -8,7 +8,13 @@ runner = "cargo espflash flash --monitor"
 build-std = ["alloc", "core"]
 
 [env]
-ESP_LOG = "info,esp_wifi=error"
+# Compile-time log filter for esp-println (a `ESP_LOG=... cargo build` on the command line
+# overrides this). NOTE: this is baked into the binary — the runtime logger can only lower
+# the level, never raise it past what was compiled in.
+ESP_LOG = "info,esp_radio=error"
+# embassy-executor 0.10 sizes its task arena via env var (the old task-arena-size-* features
+# are gone).
+EMBASSY_EXECUTOR_TASK_ARENA_SIZE = "32768"
 # OTA: the app reads the same partition table the secure-boot bootloader uses. That
 # table was moved to 0xc000 (= 49152) to make room for the larger secure bootloader,
 # so esp-bootloader-esp-idf must read it there, not at its 0x8000 default. Bootloader

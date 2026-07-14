@@ -21,7 +21,7 @@ pub fn dispatch(
     cmd: &str,
     role: &str,
     is_supervisor: bool,
-    dynamic_msg: &mut heapless::String<512>,
+    dynamic_msg: &mut heapless::String<1024>,
 ) -> Outcome {
     use core::fmt::Write as _;
 
@@ -58,32 +58,48 @@ pub fn dispatch(
                 valid_parse = false;
             }
 
-            if valid_parse {
+            // REQUIRED 4th arg: key label — names where the key lives (a device name
+            // for enclave keys, the token/cert name for PIV hardware keys) so the same
+            // role can be held by several keys and LIST/REVOKE can tell them apart.
+            // Charset is restricted (no whitespace/';') so it survives the envelope
+            // framing. No label -> no role: unlabeled entries are pre-label legacy only.
+            let label = cmd_parts.next().unwrap_or("");
+            let label_ok = !label.is_empty()
+                && label.len() <= 16
+                && label
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+
+            if valid_parse && label_ok {
                 let mut name_str = heapless::String::<16>::new();
                 let _ = name_str.push_str(new_role);
+                let mut label_str = heapless::String::<16>::new();
+                let _ = label_str.push_str(label);
                 let entry = RoleEntry {
                     name: name_str,
                     pubkey: new_pk,
                     cert_sig: new_cert,
+                    label: label_str,
                 };
-                // replace if exists
-                let mut replaced = false;
-                for e in unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.iter_mut() {
-                    if e.name == entry.name {
-                        *e = entry.clone();
-                        replaced = true;
-                        break;
-                    }
-                }
-                if !replaced {
-                    let _ = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.push(entry);
-                }
+                // Entry identity = pubkey, OR the (role, label) pair. One device/key
+                // home (label) holds SEVERAL roles (Admin@Mac AND Observer@Mac), so the
+                // label alone is NOT unique — only (role, label) is. Replace an entry
+                // when the new grant re-uses its key, or re-grants the same role on the
+                // same home. Different roles on one home, and the same role on different
+                // homes, both coexist.
+                let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
+                roles.retain(|e| {
+                    e.pubkey != entry.pubkey && !(e.name == entry.name && e.label == entry.label)
+                });
+                let _ = roles.push(entry);
 
                 storage::save_roles(unsafe { &*core::ptr::addr_of!(ROLES) });
                 info!("Saved roles to flash");
                 response_msg = "Role Added Securely";
                 allowed = true;
                 color_name = "System";
+            } else if label.is_empty() {
+                response_msg = "Missing key label";
             } else {
                 response_msg = "Invalid Role Data Format";
             }
@@ -97,21 +113,30 @@ pub fn dispatch(
             // transport field.
             let mut cmd_parts = cmd.split_whitespace();
             cmd_parts.next(); // skip REVOKE_ROLE
-            if let Some(target_role) = cmd_parts.next() {
-                let mut idx_to_remove = None;
-                let mut r_iter = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.iter().enumerate();
-                while let Some((i, r)) = r_iter.next() {
-                    if r.name == target_role {
-                        idx_to_remove = Some(i);
-                        break;
+            if let Some(target) = cmd_parts.next() {
+                // The target is a key label first (revokes exactly that key's entry),
+                // else a role name (revokes ALL entries holding that role —
+                // deterministic when several keys share it).
+                let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
+                let before = roles.len();
+                if roles.iter().any(|r| !r.label.is_empty() && r.label == target) {
+                    roles.retain(|r| r.label != target);
+                    let _ = write!(dynamic_msg, "Key {} revoked", target);
+                } else {
+                    roles.retain(|r| r.name != target);
+                    if roles.len() < before {
+                        let _ = write!(
+                            dynamic_msg,
+                            "Role {} revoked ({} entries)",
+                            target,
+                            before - roles.len()
+                        );
+                    } else {
+                        let _ = write!(dynamic_msg, "Role {} not found", target);
                     }
                 }
-                if let Some(idx) = idx_to_remove {
-                    unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.swap_remove(idx);
+                if roles.len() < before {
                     storage::save_roles(unsafe { &*core::ptr::addr_of!(ROLES) });
-                    let _ = write!(dynamic_msg, "Role {} revoked", target_role);
-                } else {
-                    let _ = write!(dynamic_msg, "Role {} not found", target_role);
                 }
                 allowed = true;
                 color_name = "System";
@@ -129,7 +154,12 @@ pub fn dispatch(
                     for b in &r.pubkey {
                         let _ = write!(&mut pk_hex, "{:02x}", b);
                     }
-                    let _ = write!(dynamic_msg, "{}:{},", r.name, pk_hex);
+                    // `name@label:pk` when labeled; legacy entries keep `name:pk`.
+                    if r.label.is_empty() {
+                        let _ = write!(dynamic_msg, "{}:{},", r.name, pk_hex);
+                    } else {
+                        let _ = write!(dynamic_msg, "{}@{}:{},", r.name, r.label, pk_hex);
+                    }
                 }
             }
             allowed = true;

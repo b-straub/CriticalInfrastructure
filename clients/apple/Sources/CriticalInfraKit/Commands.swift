@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Command strings — the wire SSOT, mirroring `shared::terminology` in the Rust
 /// workspace. The parameterized commands keep the exact trailing-space / spacing
@@ -17,15 +20,42 @@ public enum Command {
         "SET_THRESHOLD \(String(format: "%.1f", celsius))"
     }
 
-    /// e.g. `ADD_ROLE Operator <pk_hex64> <cert_hex128>`
-    public static func addRole(name: String, pubkeyHex: String, certSigHex: String) -> String {
-        "ADD_ROLE \(name) \(pubkeyHex) \(certSigHex)"
+    /// e.g. `ADD_ROLE Operator <pk_hex64> <cert_hex128> iPad-01`
+    /// The key label is REQUIRED (the firmware rejects an unlabeled grant): it names
+    /// where the key lives — a device name for enclave keys, the token/cert name for
+    /// PIV hardware keys — and shows up in `LIST_ROLES` as `name@label`. Metadata,
+    /// not part of the certificate — the supervisor-signed command authenticates it.
+    public static func addRole(
+        name: String, pubkeyHex: String, certSigHex: String, label: String
+    ) -> String {
+        "ADD_ROLE \(name) \(pubkeyHex) \(certSigHex) \(label)"
     }
 
-    /// e.g. `REVOKE_ROLE Operator` (the target is parsed from the decrypted
-    /// command by the firmware — see the REVOKE_ROLE fix in commands.rs).
+    /// e.g. `REVOKE_ROLE iPad-01` or `REVOKE_ROLE Operator` — the firmware
+    /// matches a key label first (revokes that one entry), then falls back to a
+    /// role name (revokes all entries holding it).
     public static func revokeRole(name: String) -> String {
         "REVOKE_ROLE \(name)"
+    }
+
+    /// Sanitize a proposed key label to the firmware charset `[A-Za-z0-9._-]`,
+    /// max 16 chars (spaces/umlauts become `-`).
+    public static func sanitizeLabel(_ raw: String) -> String {
+        let cleaned = raw.map { c -> Character in
+            (c.isASCII && (c.isLetter || c.isNumber)) || c == "." || c == "_" || c == "-" ? c : "-"
+        }
+        return String(String(cleaned).prefix(16))
+    }
+
+    /// Sanitized local device name — the key label for keys living in THIS
+    /// device's Secure Enclave.
+    public static func localDeviceLabel() -> String {
+        #if os(macOS)
+        let raw = Host.current().localizedName ?? "Mac"
+        #else
+        let raw = UIDevice.current.name
+        #endif
+        return sanitizeLabel(raw)
     }
 }
 

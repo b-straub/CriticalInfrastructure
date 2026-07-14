@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Smart-card token keychain (PIV keys). Required on iOS/iPadOS for
+	     SecItemCopyMatching with kSecAttrAccessGroupToken to surface keys from
+	     USB CCID smart cards (iPadOS 16.1+); harmless on macOS (the unsandboxed
+	     Mac app sees tokens regardless). -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>com.apple.token</string>
+	</array>
+</dict>
+</plist>

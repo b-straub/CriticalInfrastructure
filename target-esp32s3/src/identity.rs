@@ -79,7 +79,7 @@ pub fn derive_identity(rng: &mut esp_hal::rng::Rng) -> (StaticSecret, SigningKey
     use embedded_storage::{ReadStorage, Storage};
     use esp_storage::FlashStorage;
 
-    let mut flash = FlashStorage::new();
+    let mut flash = FlashStorage::new(unsafe { esp_hal::peripherals::FLASH::steal() });
     let mut seed_buf = [0u8; 4096];
     let mut esp_seed = [0u8; 32];
     let mut has_seed = false;

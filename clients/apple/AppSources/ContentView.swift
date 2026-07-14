@@ -13,6 +13,7 @@ struct ContentView: View {
         NavigationStack {
             content
                 .navigationTitle(title)
+                .inlineNavTitle()
                 .toolbar {
                     if model.showShowcase || model.showConfig {
                         ToolbarItem(placement: .navigation) {
@@ -55,7 +56,9 @@ struct ContentView: View {
                     }
                 }
         }
+        #if os(macOS)
         .frame(minWidth: 500, minHeight: 480)
+        #endif
     }
 
     @ViewBuilder private var content: some View {
@@ -92,7 +95,7 @@ private struct ConfigForm: View {
 
     var body: some View {
         Form {
-            Section("Device") {
+            Section {
                 Picker("Transport", selection: $model.config.transport) {
                     Text("Wi-Fi (UDP)").tag(TransportKind.udp)
                     Text("Bluetooth (BLE)").tag(TransportKind.ble)
@@ -101,6 +104,7 @@ private struct ConfigForm: View {
                 case .udp:
                     TextField("Device IP", text: $model.config.host)
                         .autocorrectionDisabled()
+                        .platformFieldKeyboard(.numeric)
                 case .ble:
                     TextField("Device name", text: $model.config.bleName)
                         .autocorrectionDisabled()
@@ -108,9 +112,52 @@ private struct ConfigForm: View {
                 TextField("X25519 (ROM) key", text: $model.config.espX25519PubHex)
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
+                    .platformFieldKeyboard(.ascii)
                 TextField("Ed25519 sig key", text: $model.config.espSigPubHex)
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
+                    .platformFieldKeyboard(.ascii)
+                Button {
+                    model.importConfigFromClipboard()
+                } label: {
+                    Label("Import config from clipboard", systemImage: "doc.on.clipboard")
+                }
+            } header: {
+                Text("Device")
+            } footer: {
+                Text("Run provision/show-device-keys.sh — it copies the device's public keys (and IP) as JSON. Universal Clipboard carries it from your Mac to a nearby iPhone/iPad.")
+            }
+
+            Section {
+                TextField("This device's name", text: $model.config.deviceName, prompt: Text(Command.localDeviceLabel()))
+                    .autocorrectionDisabled()
+            } header: {
+                Text("Identity")
+            } footer: {
+                Text("Used as the key label when this device enrolls a role (LIST_ROLES shows role@\(model.resolvedDeviceLabel)). Firmware charset [A-Za-z0-9._-], 16 chars.")
+            }
+
+            if let hw = model.hardwareKeyPubHex {
+                Section {
+                    TextField(
+                        "Token nickname",
+                        text: Binding(
+                            get: { model.config.tokenNicknames[hw] ?? "" },
+                            set: { model.setTokenNickname($0, forPubkey: hw) }
+                        ),
+                        prompt: Text(model.hardwareCertName ?? "e.g. ESP32_S3_Master")
+                    )
+                    .autocorrectionDisabled()
+                    Text(hw)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } header: {
+                    Text("Inserted hardware key")
+                } footer: {
+                    Text("The card carries no editable name, so this nickname (kept per key) is what shows in the app and prefills the key label when you provision this token as a role.")
+                }
             }
             #if os(macOS)
             Section("Provisioning") {
@@ -165,9 +212,9 @@ private struct IdentityPicker: View {
     var body: some View {
         if model.availableRoles.isEmpty && model.hardwareKeyPubHex == nil {
             ContentUnavailableView {
-                Label("No identity on this Mac", systemImage: "person.crop.circle.badge.questionmark")
+                Label("No identity on this device", systemImage: "person.crop.circle.badge.questionmark")
             } description: {
-                Text("Create the Supervisor key in this Mac's Secure Enclave (then bake its public key into the firmware), or insert a PIV hardware key.")
+                Text("Create the Supervisor key in this device's Secure Enclave (then bake its public key into the firmware), or insert a PIV hardware key.")
             } actions: {
                 Button("Register Supervisor") { model.registerSupervisor() }
                     .buttonStyle(.borderedProminent)
@@ -187,11 +234,14 @@ private struct IdentityPicker: View {
 
                 VStack(spacing: 10) {
                     ForEach(model.availableRoles, id: \.self) { role in
-                        IdentityCard(role: role) { model.select(role) }
+                        IdentityCard(role: role, deviceLabel: model.resolvedDeviceLabel) {
+                            model.select(role)
+                        }
                     }
                     if let hw = model.hardwareKeyPubHex {
                         HardwareCard(
                             pubkey: hw,
+                            keyName: model.hardwareKeyName,
                             onSupervisor: { model.useHardwareKeyAsSupervisor() },
                             onOperational: { model.useHardwareKey() }
                         )
@@ -225,6 +275,7 @@ private struct SupervisorPanel: View {
     @Bindable var model: AppModel
     @State private var externalPubkey = ""
     @State private var externalRole: Role = .admin
+    @State private var externalLabel = ""
 
     var body: some View {
         CenteredColumn {
@@ -236,7 +287,7 @@ private struct SupervisorPanel: View {
                 } label: {
                     Label(
                         model.activeIsHardware
-                            ? "Hardware supervisor key — bake as SUPERVISOR_PUBKEY"
+                            ? "Hardware supervisor key “\(model.hardwareKeyName ?? "unnamed")” — bake as SUPERVISOR_PUBKEY"
                             : "Supervisor key — bake as SUPERVISOR_PUBKEY",
                         systemImage: model.activeIsHardware ? "key.card" : "cpu"
                     )
@@ -269,14 +320,22 @@ private struct SupervisorPanel: View {
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Provision a P-256 public key from a hardware key or another Mac — the private key stays where it lives.")
+                    Text("Provision a P-256 public key from a hardware key or another device — the private key stays where it lives.")
                         .font(.caption).foregroundStyle(.secondary)
                     TextField("Public key (66 hex)", text: $externalPubkey)
-                        .font(.callout.monospaced())
+                        .hexFieldStyle()
+                    TextField("Key label — device or token name (required)", text: $externalLabel)
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                     if let hw = model.hardwareKeyPubHex {
-                        Button { externalPubkey = hw } label: {
+                        Button {
+                            externalPubkey = hw
+                            // Prefill the label from the token's display name — the
+                            // Settings nickname if set, else its certificate subject.
+                            if externalLabel.isEmpty, let name = model.hardwareKeyName {
+                                externalLabel = Command.sanitizeLabel(name)
+                            }
+                        } label: {
                             Label("Use inserted hardware key", systemImage: "key.card")
                         }
                         .buttonStyle(.borderless)
@@ -290,10 +349,14 @@ private struct SupervisorPanel: View {
                         .fixedSize()
                         Spacer()
                         Button("Provision") {
-                            model.provisionExternal(pubkeyHex: externalPubkey, as: externalRole)
+                            model.provisionExternal(
+                                pubkeyHex: externalPubkey, as: externalRole,
+                                label: externalLabel)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(externalPubkey.count != 66)
+                        .disabled(
+                            externalPubkey.count != 66
+                                || externalLabel.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
             } label: {
@@ -314,17 +377,15 @@ private struct OperatorPanel: View {
     @Bindable var model: AppModel
     let role: Role
 
-    private struct Cmd { let title: String; let icon: String; let tint: Color; let cmd: String }
-
-    private var commands: [Cmd] {
-        var c = [Cmd(title: "Read Sensor", icon: "thermometer.medium", tint: .green, cmd: Command.readSensor)]
+    private var commands: [CommandItem] {
+        var c = [CommandItem(title: "Read Sensor", icon: "thermometer.medium", tint: .green, cmd: Command.readSensor)]
         if role.operationalRank >= 2 {
-            c.append(Cmd(title: "Threshold 20°", icon: "arrow.down.to.line", tint: .orange, cmd: Command.setThreshold(20)))
-            c.append(Cmd(title: "Threshold 30°", icon: "arrow.up.to.line", tint: .orange, cmd: Command.setThreshold(30)))
+            c.append(CommandItem(title: "Threshold 20°", icon: "arrow.down.to.line", tint: .orange, cmd: Command.setThreshold(20)))
+            c.append(CommandItem(title: "Threshold 30°", icon: "arrow.up.to.line", tint: .orange, cmd: Command.setThreshold(30)))
         }
         if role.operationalRank >= 3 {
-            c.append(Cmd(title: "Clear Alarm", icon: "bell.slash.fill", tint: .red, cmd: Command.clearAlarm))
-            c.append(Cmd(title: "Test Alarm", icon: "bell.badge.fill", tint: .red, cmd: Command.colorRed))
+            c.append(CommandItem(title: "Clear Alarm", icon: "bell.slash.fill", tint: .red, cmd: Command.clearAlarm))
+            c.append(CommandItem(title: "Test Alarm", icon: "bell.badge.fill", tint: .red, cmd: Command.colorRed))
         }
         return c
     }
@@ -334,11 +395,7 @@ private struct OperatorPanel: View {
             RoleHero(role: role)
 
             GroupBox {
-                VStack(spacing: 10) {
-                    ForEach(commands, id: \.title) { c in
-                        CommandButton(title: c.title, icon: c.icon, tint: c.tint) { model.send(c.cmd) }
-                    }
-                }
+                CommandGrid(commands: commands) { model.send($0) }
             } label: {
                 Label("Commands", systemImage: "square.grid.2x2.fill")
             }
@@ -356,19 +413,72 @@ private struct OperatorPanel: View {
 struct CenteredColumn<Content: View>: View {
     var maxWidth: CGFloat = 560
     @ViewBuilder let content: Content
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSize
+    #endif
+
+    private var pad: CGFloat {
+        #if os(iOS)
+        hSize == .compact ? 16 : 24   // tighter gutters on iPhone
+        #else
+        24
+        #endif
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) { content }
+            VStack(alignment: .leading, spacing: 18) { content }
                 .frame(maxWidth: maxWidth)
                 .frame(maxWidth: .infinity)
-                .padding(24)
+                .padding(pad)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 }
 
+// MARK: - Cross-platform view helpers
+
+extension View {
+    /// Inline navigation title on iOS/iPadOS (saves the large-title vertical space);
+    /// no-op on macOS where the modifier doesn't exist.
+    @ViewBuilder func inlineNavTitle() -> some View {
+        #if os(iOS)
+        self.navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+
+    /// A monospaced key/hex field with the right mobile keyboard hygiene.
+    @ViewBuilder func hexFieldStyle() -> some View {
+        self.font(.callout.monospaced())
+            .textFieldStyle(.roundedBorder)
+            .autocorrectionDisabled()
+            .platformFieldKeyboard(.ascii)
+    }
+
+    /// Set an appropriate iOS keyboard + no autocapitalization; no-op on macOS
+    /// (where `UIKeyboardType` doesn't exist).
+    @ViewBuilder func platformFieldKeyboard(_ kind: FieldKeyboard) -> some View {
+        #if os(iOS)
+        switch kind {
+        case .ascii:
+            self.keyboardType(.asciiCapable).textInputAutocapitalization(.never)
+        case .numeric:
+            self.keyboardType(.numbersAndPunctuation).textInputAutocapitalization(.never)
+        }
+        #else
+        self
+        #endif
+    }
+}
+
+/// Cross-platform keyboard hint (maps to `UIKeyboardType` on iOS, ignored on macOS).
+enum FieldKeyboard { case ascii, numeric }
+
 private struct IdentityCard: View {
     let role: Role
+    var deviceLabel: String = ""
     let action: () -> Void
     @State private var hover = false
 
@@ -377,7 +487,17 @@ private struct IdentityCard: View {
             HStack(spacing: 14) {
                 RoleBadge(role: role, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(role.rawValue).font(.headline)
+                    HStack(spacing: 6) {
+                        Text(role.rawValue).font(.headline)
+                        if !deviceLabel.isEmpty {
+                            Text(deviceLabel)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(.quaternary, in: Capsule())
+                        }
+                    }
                     Text(role.blurb).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -447,11 +567,47 @@ private struct CommandButton: View {
         Button(action: action) {
             Label(title, systemImage: icon)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+                .padding(.vertical, 8)   // roomier tap target on touch
         }
         .buttonStyle(.bordered)
         .controlSize(.large)
         .tint(tint)
+    }
+}
+
+/// A command model shared by the operator / hardware panels.
+struct CommandItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let icon: String
+    let tint: Color
+    let cmd: String
+}
+
+/// Commands laid out in an adaptive grid: two columns where there's room
+/// (iPad / Mac / landscape), a single column on a compact iPhone width.
+private struct CommandGrid: View {
+    let commands: [CommandItem]
+    let run: (String) -> Void
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSize
+    #endif
+
+    private var columns: [GridItem] {
+        #if os(iOS)
+        let count = hSize == .compact ? 1 : 2
+        #else
+        let count = 2
+        #endif
+        return Array(repeating: GridItem(.flexible(), spacing: 10), count: count)
+    }
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(commands) { c in
+                CommandButton(title: c.title, icon: c.icon, tint: c.tint) { run(c.cmd) }
+            }
+        }
     }
 }
 
@@ -518,6 +674,7 @@ private extension View {
 
 private struct HardwareCard: View {
     let pubkey: String
+    var keyName: String?
     let onSupervisor: () -> Void
     let onOperational: () -> Void
 
@@ -531,7 +688,7 @@ private struct HardwareCard: View {
                     .background(Color.indigo.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .shadow(color: .indigo.opacity(0.35), radius: 4, y: 2)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Hardware Key").font(.headline)
+                    Text(keyName ?? "Hardware Key").font(.headline)
                     Text("PIV smart card — PIN per command").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -563,15 +720,13 @@ private struct HardwareCard: View {
 private struct HardwarePanel: View {
     @Bindable var model: AppModel
 
-    private struct Cmd { let title: String; let icon: String; let tint: Color; let cmd: String }
-
-    private let commands: [Cmd] = [
-        Cmd(title: "Identify (WHOAMI)", icon: "person.text.rectangle", tint: .indigo, cmd: Command.whoami),
-        Cmd(title: "Read Sensor", icon: "thermometer.medium", tint: .green, cmd: Command.readSensor),
-        Cmd(title: "Threshold 20°", icon: "arrow.down.to.line", tint: .orange, cmd: Command.setThreshold(20)),
-        Cmd(title: "Threshold 30°", icon: "arrow.up.to.line", tint: .orange, cmd: Command.setThreshold(30)),
-        Cmd(title: "Clear Alarm", icon: "bell.slash.fill", tint: .red, cmd: Command.clearAlarm),
-        Cmd(title: "Test Alarm", icon: "bell.badge.fill", tint: .red, cmd: Command.colorRed)
+    private let commands: [CommandItem] = [
+        CommandItem(title: "Identify (WHOAMI)", icon: "person.text.rectangle", tint: .indigo, cmd: Command.whoami),
+        CommandItem(title: "Read Sensor", icon: "thermometer.medium", tint: .green, cmd: Command.readSensor),
+        CommandItem(title: "Threshold 20°", icon: "arrow.down.to.line", tint: .orange, cmd: Command.setThreshold(20)),
+        CommandItem(title: "Threshold 30°", icon: "arrow.up.to.line", tint: .orange, cmd: Command.setThreshold(30)),
+        CommandItem(title: "Clear Alarm", icon: "bell.slash.fill", tint: .red, cmd: Command.clearAlarm),
+        CommandItem(title: "Test Alarm", icon: "bell.badge.fill", tint: .red, cmd: Command.colorRed)
     ]
 
     var body: some View {
@@ -596,16 +751,15 @@ private struct HardwarePanel: View {
                 GroupBox {
                     KeyCard(pubkey: pk)
                 } label: {
-                    Label("Card public key — provision as a role", systemImage: "cpu")
+                    Label(
+                        "Card key “\(model.hardwareKeyName ?? "unnamed")” — provision as a role",
+                        systemImage: "cpu"
+                    )
                 }
             }
 
             GroupBox {
-                VStack(spacing: 10) {
-                    ForEach(commands, id: \.title) { c in
-                        CommandButton(title: c.title, icon: c.icon, tint: c.tint) { model.send(c.cmd) }
-                    }
-                }
+                CommandGrid(commands: commands) { model.send($0) }
             } label: {
                 Label("Commands", systemImage: "square.grid.2x2.fill")
             }

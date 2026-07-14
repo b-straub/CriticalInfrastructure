@@ -29,6 +29,11 @@ and is verifiable with [Tamarin Prover](https://tamarin-prover.com/).
   `Date.now()` in reality), so replay protection rests on the device clock, not
   on timestamp secrecy.
 
+  The model is **transport-independent**: the envelope is carried unchanged over
+  UDP ([`UDP-TRANSPORT.md`](UDP-TRANSPORT.md)) and BLE GATT
+  ([`BLE-TRANSPORT.md`](BLE-TRANSPORT.md)); neither transport adds security
+  assumptions (the BLE link uses no pairing — the envelope is the boundary).
+
 - `ota.spthy` — Tamarin model for the **OTA image delivery protocol** (the
   `ota-net` `:8081` receive path). It encodes the Secure Boot v2 signature
   (abstracted as an unforgeable signature key — the same key both the bootloader

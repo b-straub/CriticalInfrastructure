@@ -1,6 +1,11 @@
 import CriticalInfraKit
 import Observation
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// App state built around **identities**: one Secure Enclave key per role
 /// (Supervisor / Admin / Operator / Observer), keyed by the role name. You pick
@@ -20,6 +25,17 @@ final class AppModel {
     var showShowcase = false
     /// Compressed pubkey of an inserted PIV / hardware key, if any.
     var hardwareKeyPubHex: String?
+    /// Certificate subject of the inserted token's key (e.g. "CriticalInfra
+    /// Supervisor"), if any — the on-card name.
+    var hardwareCertName: String?
+    /// Display name for the inserted token: the user's nickname (Settings) if set,
+    /// else the on-card certificate subject.
+    var hardwareKeyName: String? {
+        if let hw = hardwareKeyPubHex, let nick = config.tokenNicknames[hw], !nick.isEmpty {
+            return nick
+        }
+        return hardwareCertName
+    }
     /// True while acting via a hardware key (its device role is enforced remotely).
     var hardwareMode = false
 
@@ -31,6 +47,7 @@ final class AppModel {
         showConfig = cfg.needsSetup
         availableRoles = Self.loadAvailableRoles()
         hardwareKeyPubHex = PIVSigner.detect()
+        hardwareCertName = PIVSigner.tokenKeyName()
     }
 
     private static func loadAvailableRoles() -> [Role] {
@@ -83,10 +100,32 @@ final class AppModel {
         lastResponse = nil
         availableRoles = Self.loadAvailableRoles()
         hardwareKeyPubHex = PIVSigner.detect()
+        hardwareCertName = PIVSigner.tokenKeyName()
     }
 
     /// Re-scan for an inserted hardware key.
-    func refreshHardware() { hardwareKeyPubHex = PIVSigner.detect() }
+    func refreshHardware() {
+        hardwareKeyPubHex = PIVSigner.detect()
+        hardwareCertName = PIVSigner.tokenKeyName()
+    }
+
+    /// This device's key label for enclave-key role enrollment: the Settings
+    /// override if set, else the sanitized OS device name.
+    var resolvedDeviceLabel: String {
+        let override = config.deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return override.isEmpty ? Command.localDeviceLabel() : Command.sanitizeLabel(override)
+    }
+
+    /// Set (or clear, with "") the nickname for a hardware key by its pubkey.
+    func setTokenNickname(_ nickname: String, forPubkey pubkey: String) {
+        let trimmed = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            config.tokenNicknames.removeValue(forKey: pubkey)
+        } else {
+            config.tokenNicknames[pubkey] = trimmed
+        }
+        config.save()
+    }
 
     /// Act via the inserted hardware key. Its device role is enforced by the
     /// device (discover it with WHOAMI); nothing about the role is known locally.
@@ -134,7 +173,8 @@ final class AppModel {
                 let cmd = try Provisioning.addRoleCommand(
                     role: role.rawValue,
                     newPublicKeyHex: roleKey.publicKeyHex,
-                    supervisor: supervisor
+                    supervisor: supervisor,
+                    label: resolvedDeviceLabel // enclave key lives here -> this device's name
                 )
                 let client = DeviceClient(config: cfg, signer: supervisor)
                 lastResponse = await client.send(cmd)
@@ -168,9 +208,11 @@ final class AppModel {
     }
 
     /// Supervisor provisions an EXTERNAL public key (a hardware key, or another
-    /// Mac's enclave key) as a role — no local key is created here, so the private
-    /// key stays where it lives (the card / the other Mac).
-    func provisionExternal(pubkeyHex: String, as role: Role) {
+    /// device's enclave key) as a role — no local key is created here, so the
+    /// private key stays where it lives (the card / the other device). The key
+    /// label (required) names where the key lives — device or token name — for
+    /// LIST_ROLES / targeted revocation.
+    func provisionExternal(pubkeyHex: String, as role: Role, label: String) {
         guard let supervisor = signer, activeRole == .supervisor else {
             lastResponse = "Select the Supervisor identity first."
             return
@@ -180,13 +222,19 @@ final class AppModel {
             lastResponse = "Public key must be 66 hex characters (compressed P-256)."
             return
         }
+        let sanitized = Command.sanitizeLabel(label.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !sanitized.isEmpty else {
+            lastResponse = "A key label is required (device or token name) — the firmware rejects unlabeled grants."
+            return
+        }
         let cfg = config
         Task {
             busy = true
             defer { busy = false }
             do {
                 let cmd = try Provisioning.addRoleCommand(
-                    role: role.rawValue, newPublicKeyHex: pk, supervisor: supervisor)
+                    role: role.rawValue, newPublicKeyHex: pk, supervisor: supervisor,
+                    label: sanitized)
                 let client = DeviceClient(config: cfg, signer: supervisor)
                 lastResponse = await client.send(cmd)
             } catch {
@@ -218,5 +266,40 @@ final class AppModel {
     func saveConfig() {
         config.save()
         showConfig = config.needsSetup
+    }
+
+    /// Import a device descriptor JSON (from `provision/show-device-keys.sh`) into
+    /// the current config — keys, and host/name if present. Returns a status
+    /// message. Public-key data only; nothing secret is imported.
+    @discardableResult
+    func importConfig(json: Data) -> Bool {
+        do {
+            try config.apply(importJSON: json)
+            config.save()
+            showConfig = config.needsSetup
+            lastResponse = "Imported device keys\(config.host.isEmpty ? "" : " + host \(config.host)")."
+            return true
+        } catch {
+            lastResponse = "Import failed: \(error)"
+            return false
+        }
+    }
+
+    /// Import from the system clipboard (the script copies the JSON there;
+    /// Universal Clipboard carries it from a nearby Mac to iPhone/iPad).
+    @discardableResult
+    func importConfigFromClipboard() -> Bool {
+        #if canImport(AppKit)
+        let text = NSPasteboard.general.string(forType: .string)
+        #elseif canImport(UIKit)
+        let text = UIPasteboard.general.string
+        #else
+        let text: String? = nil
+        #endif
+        guard let text, let data = text.data(using: .utf8) else {
+            lastResponse = "Clipboard is empty — run provision/show-device-keys.sh first."
+            return false
+        }
+        return importConfig(json: data)
     }
 }

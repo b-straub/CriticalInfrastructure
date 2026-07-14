@@ -2,6 +2,11 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+// The signed-response builder puts its large hex buffers on the heap (esp_alloc),
+// not the stack: on the widened LIST_ROLES buffers they overflowed the main task
+// stack and hung command processing on both transports. See crypto.rs / protocol.rs.
+extern crate alloc;
+
 esp_bootloader_esp_idf::esp_app_desc!();
 
 use embassy_executor::Spawner;
@@ -12,15 +17,12 @@ use embassy_time::{Duration, Timer};
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_hal::{rng::Rng, timer::timg::TimerGroup};
-#[cfg(feature = "udp-transport")]
 use esp_hal::spi::{
     master::{Config as SpiConfig, Spi},
     Mode,
 };
 use log::info;
-#[cfg(feature = "udp-transport")]
 use smart_leds::{colors, SmartLedsWrite};
-#[cfg(feature = "udp-transport")]
 use ws2812_spi::Ws2812;
 #[cfg(feature = "udp-transport")]
 use static_cell::StaticCell;
@@ -35,10 +37,10 @@ mod clientauth;
 mod commands;
 mod crypto;
 mod identity;
+#[cfg(feature = "udp-transport")]
 mod net;
 mod ota;
 mod protocol;
-#[cfg(feature = "udp-transport")]
 mod sensor;
 mod state;
 mod storage;
@@ -51,9 +53,14 @@ use crate::state::*;
 #[cfg(not(any(feature = "udp-transport", feature = "ble-transport")))]
 compile_error!("enable a transport: `udp-transport` and/or `ble-transport`");
 
-#[esp_hal_embassy::main]
+#[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    esp_println::logger::init_logger_from_env();
+    // TEMPORARY (BLE bring-up forensics): build with ESP_LOG="info,esp_radio=trace,esp_rtos=trace"
+    // so the radio traces are compiled in, but start the runtime gate at Info — the UDP/OTA path
+    // must stay quiet (a trace-flooded Wi-Fi boot crawls and endangers OTA-ability on this sealed
+    // device). The gate is raised to Trace only for a BLE-mode boot, after the GPIO10 read below.
+    // Revert to init_logger_from_env() once BLE is up.
+    esp_println::logger::init_logger(log::LevelFilter::Info);
     info!("Starting...");
     info!("Firmware {} built {}", env!("FW_VERSION"), env!("FW_BUILD"));
     if let Some(raw_hex_str) = option_env!("SUPERVISOR_PUBKEY") {
@@ -63,7 +70,10 @@ async fn main(spawner: Spawner) {
         info!("WARNING: No SUPERVISOR_PUBKEY found at compile time! Crypto will default to zeros.");
     }
 
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+    // CpuClock::default() is only 80 MHz; the radio needs the full 240 MHz. Wi-Fi tolerates
+    // 80 MHz but the BLE/BT controller PHY bring-up hangs (esp-wifi-sys #409), so run at max.
+    let peripherals =
+        esp_hal::init(esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::max()));
 
     // OTA: which A/B slot we booted, from the MMU (a register read — correct under
     // flash encryption, no partition-table read).
@@ -74,13 +84,39 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "ota-selftest")]
     ota::maybe_self_copy_test();
 
+    // The radio blob needs ~200KB heap, but the linker cannot fit a single 200KB
+    // contiguous block into the `.bss` segment due to fragmentation. By splitting it
+    // into two blocks, the linker can place them in available SRAM.
+    // IMPORTANT: use u32 to force 4-byte alignment; C-blobs will crash on misaligned ptrs!
+    // Region 2 is 48KB (not the old 72KB): the main stack gets whatever DRAM remains after
+    // .bss, and esp-hal 1.1 asserts on it at boot — 68KB left only ~7KB of stack and the
+    // esp-rtos boot path needs ~9KB before esp_hal::init even runs (measured on hardware:
+    // sp=0x3fcd9560 vs bottom=0x3fcd9acc, top=0x3fcdb700). 48KB leaves a ~27KB main stack;
+    // 176KB total heap is still ample for a single radio (no coex).
+    static mut HEAP1: core::mem::MaybeUninit<[u32; 32 * 1024]> = core::mem::MaybeUninit::uninit();
+    static mut HEAP2: core::mem::MaybeUninit<[u32; 12 * 1024]> = core::mem::MaybeUninit::uninit();
+
+    unsafe {
+        esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+            core::ptr::addr_of_mut!(HEAP1).cast::<u8>(),
+            128 * 1024,
+            esp_alloc::MemoryCapability::Internal.into(),
+        ));
+        esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+            core::ptr::addr_of_mut!(HEAP2).cast::<u8>(),
+            48 * 1024,
+            esp_alloc::MemoryCapability::Internal.into(),
+        ));
+    }
+
+    // esp-rtos replaces both esp-hal-embassy (executor/time driver) and the old esp-wifi
+    // builtin scheduler: one priority scheduler drives embassy AND the radio blob's tasks.
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_hal_embassy::init(timg0.timer0);
+    let sw_int =
+        esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    esp_alloc::heap_allocator!(size: 72 * 1024);
-
-    let timg1 = TimerGroup::new(peripherals.TIMG1);
-    let mut rng = Rng::new(peripherals.RNG);
+    let mut rng = Rng::new();
 
     // Device identity (X25519 for the command envelope, Ed25519 for signing
     // responses). The two provisioning paths live in `identity.rs`.
@@ -90,99 +126,48 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "efuse-hmac-identity"))]
     let (esp_x25519_secret, esp_signing_key) = identity::derive_identity(&mut rng);
 
-    // We can still pass rng to esp_wifi because we didn't consume it (Rng is Copy)
-    let init = static_cell::make_static!(esp_wifi::init(timg1.timer0, rng).unwrap());
-
-    // ---- Transport select (hybrid): a physical switch on GPIO14 picks the radio at boot ----
-    // Wired to GND → BLE; open (internal pull-up) → UDP/Wi-Fi. Only one radio comes up (no coex),
-    // so it's robust and deploys to a sealed board via OTA (default UDP keeps working). In a
-    // BLE-only build (no udp-transport) there is no fallback, so BLE always runs.
-    #[cfg(feature = "ble-transport")]
-    {
-        let _ = &spawner; // spawner is only used by the UDP transport block below
-        #[cfg(feature = "udp-transport")]
-        let select_ble = {
+    // ---- Transport select (hybrid): a physical switch on GPIO10 picks the radio at boot ----
+    // Active-LOW, matching the proven pull-up read direction (same as the DHT11 data line): an
+    // internal pull-up idles GPIO10 HIGH → UDP/Wi-Fi only. The switch closes GPIO10 to GND → LOW → 
+    // BLE + Wi-Fi Coexistence.
+    let enable_ble = {
+        #[cfg(all(feature = "ble-transport", feature = "udp-transport"))]
+        let enable_ble = {
             use esp_hal::gpio::{Input, InputConfig, Pull};
-            // INTERACTIVE LIVE SCAN (~45s): hold a wide set of broken-out free GPIOs with internal
-            // pull-ups and poll them continuously, logging every level CHANGE. Flip your switch (or
-            // touch a GND jumper to a pad) and watch serial track it LIVE — "GPIOxx -> LOW"/"-> HIGH"
-            // names the pad in real time, so the once-at-boot timing can't hide it. After the window
-            // it ALWAYS boots UDP (stays reachable/OTA-able). Revert to a single GPIO read once the
-            // pad is confirmed.
-            macro_rules! mk {
-                ($id:ident) => {
-                    Input::new(peripherals.$id, InputConfig::default().with_pull(Pull::Up))
-                };
-            }
-            // GPIO0 = the onboard BOOT button (hardwired to the chip through GND). It is the CONTROL:
-            // pressing BOOT must print "GPIO0 -> LOW" — proving reads work with zero breadboard wiring.
-            let pins = [
-                (0u8, mk!(GPIO0)), (1, mk!(GPIO1)), (2, mk!(GPIO2)), (3, mk!(GPIO3)),
-                (5, mk!(GPIO5)), (6, mk!(GPIO6)), (7, mk!(GPIO7)), (10, mk!(GPIO10)),
-                (11, mk!(GPIO11)), (12, mk!(GPIO12)), (13, mk!(GPIO13)), (14, mk!(GPIO14)),
-                (15, mk!(GPIO15)), (16, mk!(GPIO16)), (17, mk!(GPIO17)), (18, mk!(GPIO18)),
-                (38, mk!(GPIO38)), (39, mk!(GPIO39)), (40, mk!(GPIO40)), (41, mk!(GPIO41)),
-                (42, mk!(GPIO42)), (47, mk!(GPIO47)), (48, mk!(GPIO48)),
-            ];
-            let mut prev = [false; 32]; // is_low state per pin (>= pins.len()); pull-ups => start high
-            info!("LIVE SCAN (~45s): press the onboard BOOT button (GPIO0) to prove reads work; then flip your switch. Changes below:");
-            for _ in 0..150u32 {
-                for (i, (g, p)) in pins.iter().enumerate() {
-                    let low = p.is_low();
-                    if low != prev[i] {
-                        info!("LIVE: GPIO{} -> {}", g, if low { "LOW (grounded)" } else { "HIGH" });
-                        prev[i] = low;
-                    }
-                }
-                Timer::after(Duration::from_millis(300)).await;
-            }
-            info!("Transport: UDP/Wi-Fi (live-scan window ended; always boots UDP)");
-            false // always UDP — safe, stays reachable
+            let sel = Input::new(peripherals.GPIO10, InputConfig::default().with_pull(Pull::Up));
+            let delay = esp_hal::delay::Delay::new();
+            delay.delay_millis(150);
+            let ble = sel.is_low();
+            info!(
+                "Transport select: GPIO10 = {} -> {}",
+                if ble { "LOW" } else { "HIGH" },
+                if ble { "BLE only" } else { "UDP only" }
+            );
+            ble
         };
-        #[cfg(not(feature = "udp-transport"))]
-        let select_ble = true;
+        #[cfg(all(feature = "ble-transport", not(feature = "udp-transport")))]
+        let enable_ble = true;
+        #[cfg(not(feature = "ble-transport"))]
+        let enable_ble = false;
+        enable_ble
+    };
 
-        if select_ble {
-            ble::run(
-                init,
-                peripherals.BT,
-                esp_x25519_secret,
-                esp_signing_key,
-                rng,
-                peripherals.I2C0,
-                peripherals.GPIO8,
-                peripherals.GPIO9,
-            )
-            .await;
-            // ble::run never returns; the UDP block below is reached only when select_ble == false.
-        }
-    }
+    // NOTE: do NOT raise the runtime log gate to Trace in BLE mode. The esp-rtos scheduler
+    // trace-logs every task switch, and those blocking 115200-baud UART writes delay the BT
+    // controller task past its radio deadlines — the host stack reports "advertising" but
+    // nothing is emitted on air (observed on hardware). Radio timing needs a quiet console.
 
-    // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
-    #[cfg(feature = "udp-transport")]
-    {
-    let (mut _controller, interfaces) =
-        esp_wifi::wifi::new(init, peripherals.WIFI).unwrap();
-    let wifi_interface = interfaces.sta;
 
-    let spi_config = SpiConfig::default().with_frequency(esp_hal::time::Rate::from_mhz(3)).with_mode(Mode::_0);
-    let spi = Spi::new(peripherals.SPI2, spi_config).expect("SPI new failed")
-        .with_mosi(peripherals.GPIO4);
-    let mut ws2812 = Ws2812::new(spi);
 
-    let data = [colors::BLACK; 8];
-    ws2812.write(data.iter().cloned()).unwrap();
-
-    use esp_hal::i2c::master::{I2c, Config as I2cConfig};
-    use lcd1602_driver::lcd::{Lcd, Basic, Ext};
-    use lcd1602_driver::sender::I2cSender;
-
-    let mut i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
-        .expect("I2C new failed")
-        .with_sda(peripherals.GPIO8)
-        .with_scl(peripherals.GPIO9);
-
-    let mut delay = esp_hal::delay::Delay::new();
+    // ---- LCD bring-up (both transports; BLE shows link status, UDP shows the IP) ----
+    let mut i2c = {
+        use esp_hal::i2c::master::{Config as I2cConfig, I2c};
+        I2c::new(peripherals.I2C0, I2cConfig::default())
+            .expect("I2C new failed")
+            .with_sda(peripherals.GPIO8)
+            .with_scl(peripherals.GPIO9)
+    };
+    let mut lcd_delay = esp_hal::delay::Delay::new();
 
     // Robust LCD reset BEFORE the driver init. A warm flash resets the ESP but
     // not the LCD, which can be left mid-command in 4-bit mode. The lcd1602
@@ -191,21 +176,94 @@ async fn main(spawner: Spawner) {
     // strobe the 0x3 reset nibble three times on the PCF8574 backpack
     // (P4-7 = data, P3 = backlight, P2 = Enable) to force the controller back to
     // 8-bit; the driver's normal init then switches it to 4-bit cleanly.
-    delay.delay_millis(100);
+    lcd_delay.delay_millis(100);
     for wait_us in [4500u32, 200, 200] {
         let _ = i2c.write(0x27u8, &[0x3Cu8]); // nibble 0x3, backlight on, Enable high
-        delay.delay_micros(1);
+        lcd_delay.delay_micros(1);
         let _ = i2c.write(0x27u8, &[0x38u8]); // Enable low -> latch
-        delay.delay_micros(wait_us);
+        lcd_delay.delay_micros(wait_us);
     }
-    delay.delay_millis(5);
+    lcd_delay.delay_millis(5);
 
+    // DHT11 data line (GPIO21) — both transports show temp/humidity on LCD line 2.
+    let mut dht_pin = esp_hal::gpio::Flex::new(peripherals.GPIO21);
+
+    // WS2812 LED ring (SPI2/GPIO4) — both transports render command colors and the alarm
+    // blink from the shared state (protocol.rs sets COMMAND_OVERRIDE_*, transport-independent).
+    let spi_config = SpiConfig::default()
+        .with_frequency(esp_hal::time::Rate::from_mhz(3))
+        .with_mode(Mode::_0);
+    let spi = Spi::new(peripherals.SPI2, spi_config)
+        .expect("SPI new failed")
+        .with_mosi(peripherals.GPIO4);
+    let mut ws2812 = Ws2812::new(spi);
+    ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+
+    // Persisted state is transport-independent: the SAME roles and alarm threshold apply
+    // whether a command arrives over UDP or BLE, so load them before the transport split.
+    // (This used to live in the UDP branch only — a BLE boot then ran with an empty role
+    // table and rejected every granted client identity as "Unknown Role".)
+    if let Some(saved_roles) = storage::load_roles() {
+        unsafe {
+            crate::state::ROLES = saved_roles;
+        }
+        info!("Loaded roles from flash");
+    }
+    if let Some(stored) = storage::load_threshold() {
+        unsafe {
+            crate::state::THRESHOLD = stored;
+        }
+        info!("Loaded threshold from flash: {:.1}C", stored);
+    }
+
+    // ---- BLE Transport ----
+    #[cfg(feature = "ble-transport")]
+    let ble_connector = if enable_ble {
+        use esp_radio::ble::controller::BleConnector;
+        info!("Creating BleConnector...");
+        Some(BleConnector::new(peripherals.BT, Default::default()).unwrap())
+    } else {
+        None
+    };
+
+    #[cfg(feature = "ble-transport")]
+    if let Some(connector) = ble_connector {
+        // embassy-executor 0.10: the task-fn call is the fallible part (arena allocation),
+        // spawn() itself takes the token and returns ().
+        spawner.spawn(
+            ble::ble_task(
+                connector,
+                esp_x25519_secret.clone(),
+                esp_signing_key.clone(),
+                rng,
+            )
+            .unwrap(),
+        );
+    }
+
+    // ---- UDP transport: Wi-Fi STA + embassy-net + the datagram loop ----
+    #[cfg(feature = "udp-transport")]
+    if !enable_ble {
+        use esp_radio::wifi::{sta::StationConfig, Config as WifiConfig, ControllerConfig};
+        let station_config = WifiConfig::Station(
+            StationConfig::default()
+                .with_ssid(option_env!("WIFI_SSID").unwrap_or("YOUR_SSID"))
+                .with_password(option_env!("WIFI_PASS").unwrap_or("YOUR_PASSWORD").into()),
+        );
+        let (_controller, interfaces) = esp_radio::wifi::new(
+            peripherals.WIFI,
+            ControllerConfig::default().with_initial_config(station_config),
+        )
+        .unwrap();
+        log::info!("wifi::new created successfully");
+        let wifi_interface = interfaces.station;
+
+    use lcd1602_driver::lcd::{Lcd, Basic, Ext};
+    use lcd1602_driver::sender::I2cSender;
+
+    // LCD driver over the I2C bus brought up before the transport split.
     let mut sender = I2cSender::new(&mut i2c, 0x27);
-    let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
-
-    // Set up GPIO21 for DHT11 data line
-    use esp_hal::gpio::Flex;
-    let mut dht_pin = Flex::new(peripherals.GPIO21);
+    let mut lcd = Lcd::new(&mut sender, &mut lcd_delay, Default::default(), Default::default());
 
     lcd.clean_display();
     lcd.write_str_to_cur("Init Network...");
@@ -220,26 +278,10 @@ async fn main(spawner: Spawner) {
         1234, // Random seed
     );
 
-    spawner.spawn(net::connection(_controller)).unwrap();
-    spawner.spawn(net::net_task(runner)).unwrap();
+    spawner.spawn(net::connection(_controller).unwrap());
+    spawner.spawn(net::net_task(runner).unwrap());
     #[cfg(feature = "ota-net")]
-    spawner.spawn(ota::server_task(stack)).unwrap();
-
-    if let Some(saved_roles) = storage::load_roles() {
-        unsafe {
-            ROLES = saved_roles;
-        }
-        info!("Loaded roles from flash");
-    }
-
-    // Load the persisted alarm threshold (falls back to the compiled default if
-    // never written / flash erased).
-    if let Some(stored) = storage::load_threshold() {
-        unsafe {
-            THRESHOLD = stored;
-        }
-        info!("Loaded threshold from flash: {:.1}C", stored);
-    }
+    spawner.spawn(ota::server_task(stack).unwrap());
 
 
     loop {
@@ -410,4 +452,81 @@ async fn main(spawner: Spawner) {
         }
     }
     } // end #[cfg(feature = "udp-transport")] block
+
+    // BLE mode: main becomes the display task (and must never return — returning would end
+    // the executor's main task). Line 1 = BLE link status from the shared atomic in `ble`,
+    // line 2 = firmware build tag + a 1Hz heartbeat tick, so reboots and liveness are visible
+    // on the device even though BLE mode has no IP to show.
+    #[cfg(feature = "ble-transport")]
+    if enable_ble {
+        use core::fmt::Write as _;
+        use core::sync::atomic::Ordering;
+        use lcd1602_driver::lcd::{Basic, Ext, Lcd};
+        use lcd1602_driver::sender::I2cSender;
+
+        let mut sender = I2cSender::new(&mut i2c, 0x27);
+        let mut lcd = Lcd::new(&mut sender, &mut lcd_delay, Default::default(), Default::default());
+        lcd.clean_display();
+        lcd.write_str_to_cur("BLE starting... ");
+
+        let mut shown = 0xFFu8;
+        let mut tick: u32 = 0;
+        loop {
+            let status = ble::BLE_STATUS.load(Ordering::Relaxed);
+            if status != shown {
+                shown = status;
+                lcd.set_cursor_pos((0, 0));
+                lcd.write_str_to_cur(match status {
+                    ble::STATUS_CONNECTED => "BLE connected   ",
+                    ble::STATUS_ADVERTISING => "BLE advertising ",
+                    _ => "BLE starting... ",
+                });
+            }
+
+            // Every 2s (8 ticks): read the DHT11, publish to the shared state the command
+            // handlers read (READ_SENSOR, alarm evaluation), and render LCD line 2 in the
+            // same format as UDP mode.
+            if tick % 8 == 0 {
+                let mut line = heapless::String::<16>::new();
+                if let Some((temp, hum)) = sensor::read_dht11(&mut dht_pin) {
+                    let _ = write!(&mut line, "{:.1}C {:.0}%H {}", temp, hum, env!("FW_SHORT"));
+                    unsafe {
+                        crate::state::LAST_TEMP = temp;
+                        crate::state::LAST_RH = hum;
+                        if temp > crate::state::THRESHOLD {
+                            crate::state::ALARM_ACTIVE = true;
+                        }
+                    }
+                } else {
+                    let _ = write!(&mut line, "Sensor Error");
+                }
+                while line.len() < 16 {
+                    let _ = line.push(' ');
+                }
+                lcd.set_cursor_pos((0, 1));
+                lcd.write_str_to_cur(&line);
+            }
+            tick = tick.wrapping_add(1);
+
+            // LED ring, same semantics as the UDP idle render: command color override wins,
+            // then the alarm blink, else off.
+            unsafe {
+                let now = embassy_time::Instant::now().as_millis();
+                if now < crate::state::COMMAND_OVERRIDE_UNTIL {
+                    let color_copy = crate::state::COMMAND_OVERRIDE_COLOR;
+                    ws2812.write(color_copy.iter().cloned()).unwrap();
+                } else if crate::state::ALARM_ACTIVE {
+                    if (now / 250) % 2 == 0 {
+                        ws2812.write([colors::RED; 8].iter().cloned()).unwrap();
+                    } else {
+                        ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                    }
+                } else {
+                    ws2812.write([colors::BLACK; 8].iter().cloned()).unwrap();
+                }
+            }
+
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(250)).await;
+        }
+    }
 }

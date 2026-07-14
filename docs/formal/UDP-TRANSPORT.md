@@ -1,7 +1,8 @@
 # UDP Transport — Native Client
 
-Status: **implemented — now the only transport.** This document records the move
-from the original browser/HTTP flavor to a raw-UDP command transport for a
+Status: **implemented — the primary transport** (a BLE GATT second path carries the
+same envelope, see [`BLE-TRANSPORT.md`](BLE-TRANSPORT.md)). This document records the
+move from the original browser/HTTP flavor to a raw-UDP command transport for a
 platform-native client (the SwiftUI app), and specifies that transport. The
 device carries the *existing* command envelope over UDP; the firmware lives
 behind the `udp-transport` cargo feature (flash with `./flash-udp.sh`); the
@@ -33,16 +34,20 @@ The migration replaced one transport with another (same crates, same envelope):
 | --- | --- | --- | --- |
 | `http` (removed) | HTTP/1.1 · `:8080/tcp` | browser dashboard (Leptos/WASM) | cross-platform, zero-install |
 | `udp` (current) | raw UDP · `:8080/udp` | native app (SwiftUI, …) | lightweight, hardware-crypto client |
-| `ble` (second path) | BLE GATT (`9e7312e0-…`) | native app (CoreBluetooth) | no Wi-Fi/LAN: commissioning, network-down, iOS |
+| `ble` (hybrid, implemented) | BLE GATT (`9e7312e0-…`) | native app (CoreBluetooth) | no Wi-Fi/LAN: commissioning, network-down, iOS |
 
-**BLE second path (hybrid, switch-selected).** The `ble-transport` cargo feature adds a BLE GATT
+**BLE second path (hybrid, switch-selected) — implemented & hardware-verified, see
+[`BLE-TRANSPORT.md`](BLE-TRANSPORT.md).** The `ble-transport` cargo feature adds a BLE GATT
 server that carries the **same** envelope (a `rx` write + `tx` notify characteristic, chunked
 `[total][seq][payload]`, into the unchanged `process_envelope`). A build with both `udp-transport`
-+ `ble-transport` is a **hybrid**: a **physical slide switch on GPIO14** picks the radio at boot —
-grounded → BLE, open → UDP (internal pull-up). Only one radio runs at a time (no Wi-Fi/BLE coex),
-so it stays robust, and a hybrid image still deploys to a sealed board over OTA (UDP keeps
-working). The Swift client picks the matching transport in Settings (Transport: Wi-Fi / Bluetooth);
-`ble.rs` (firmware) and `BleTransport.swift` (client) both reuse the UDP framing + envelope.
++ `ble-transport` is a **hybrid**: a **physical slide switch on GPIO10** picks the radio at boot —
+grounded → BLE, open → UDP (internal pull-up, active-low). Only one radio runs at a time (no
+Wi-Fi/BLE coex), so it stays robust, and a hybrid image still deploys to a sealed board over OTA
+(**OTA requires the switch on UDP**). Roles, threshold, and sensor state are shared between
+transports. The Swift client picks the matching transport in Settings (Transport: Wi-Fi /
+Bluetooth); `ble.rs` (firmware) and `BleTransport.swift` (client) both reuse the UDP framing +
+envelope. Radio stack: esp-hal 1.1 + esp-radio/esp-rtos + trouble-host (version coupling and
+operational constraints in the BLE doc).
 
 ## 1. Unchanged: the crypto envelope (single source of truth)
 
@@ -91,13 +96,25 @@ RESP_EPH_PUB_HEX ";" IV_HEX ";" CT_HEX
 - Client accepts iff `RSIG` verifies against the device Ed25519 signing pubkey
   **and** `RESP_TS == request TS`.
 
-### 1.3 Command set (from `shared::terminology`, unchanged)
+### 1.3 Command set (from `shared::terminology`)
 
 `WHOAMI` · `READ_SENSOR` · `SET_THRESHOLD <f32>` · `CLEAR_ALARM` ·
-`COLOR green|yellow|red` · `ADD_ROLE <role> <pk_hex64> <cert_hex128>` ·
-`REVOKE_ROLE <role>` · `LIST_ROLES`. RBAC per command is unchanged; the caller's
-role is decided by *which* Ed25519 pubkey verifies the signature, never by any
-field the client asserts.
+`COLOR green|yellow|red` · `ADD_ROLE <role> <pk_hex64> <cert_hex128> <key_label>` ·
+`REVOKE_ROLE <key_label|role>` · `LIST_ROLES`. RBAC per command is unchanged; the
+caller's role is decided by *which* Ed25519 pubkey verifies the signature, never
+by any field the client asserts.
+
+**Per-key enrollment.** The **required** key label
+(`[A-Za-z0-9._-]{1,16}`, e.g. `iPad-01`) lets several devices hold the *same*
+role with their own keys: the firmware rejects an unlabeled grant ("Missing
+key label"), entries are keyed by pubkey/label (not role name), `LIST_ROLES`
+prints `name@label:pk`, and `REVOKE_ROLE` matches a key label first (that
+one entry), then a role name (all entries holding it). The label is metadata
+outside the role certificate — the supervisor-signed ADD_ROLE command
+authenticates it, so existing certificates stay valid. Unlabeled entries can
+only exist as migrated pre-label legacy data. Keys never sync between devices
+by design; each device enrolls its own Secure Enclave key (or a roaming PIV
+stick enrolls once and travels).
 
 ## 2. UDP transport layer (the only new part)
 

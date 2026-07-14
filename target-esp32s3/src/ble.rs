@@ -1,8 +1,9 @@
 //! BLE GATT transport — carries the SAME command envelope as the UDP path over a Bluetooth LE
 //! GATT link, so the device is controllable without Wi-Fi/LAN (commissioning, network-down, iOS
 //! without a network). In a hybrid build (both `udp-transport` + `ble-transport`) a physical
-//! switch on GPIO14 selects this path over UDP at boot; only one radio runs at a time (no coex),
-//! which keeps it robust and lets a hybrid image deploy to a sealed board via OTA.
+//! switch on GPIO10 (LOW = BLE, active-low pull-up) selects this path over UDP at boot; only one
+//! radio runs (no coex), which keeps it robust and lets a hybrid image deploy to a sealed board
+//! via OTA.
 //!
 //! The security boundary is the app-layer envelope (X25519 + AES-GCM + P-256/Ed25519), so the
 //! BLE link itself needs no pairing/bonding — a "just works" connection is fine; bad envelopes
@@ -15,15 +16,19 @@
 use bt_hci::controller::ExternalController;
 use embassy_futures::join::join;
 use ed25519_dalek::SigningKey;
-use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::rng::Rng;
-use esp_wifi::ble::controller::BleConnector;
-use esp_wifi::EspWifiController;
-use lcd1602_driver::lcd::{Basic, Ext, Lcd};
-use lcd1602_driver::sender::I2cSender;
+use esp_radio::ble::controller::BleConnector;
+
 use log::info;
 use trouble_host::prelude::*;
 use x25519_dalek::StaticSecret;
+
+/// BLE link status for the display loop in `main` (BLE mode has no IP to show).
+pub static BLE_STATUS: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(STATUS_STARTING);
+pub const STATUS_STARTING: u8 = 0;
+pub const STATUS_ADVERTISING: u8 = 1;
+pub const STATUS_CONNECTED: u8 = 2;
 
 /// Max application payload per BLE frame (frame = 2 header + payload ≤ char size ~244).
 const MAX_CHUNK: usize = 240;
@@ -32,7 +37,8 @@ const CHAR_CAP: usize = MAX_CHUNK + 2;
 /// Largest reassembled request we accept.
 const MAX_REQ: usize = 1024;
 
-type Frame = heapless::Vec<u8, CHAR_CAP>;
+// heapless 0.9 (aliased): trouble's AsGatt/FromGatt impls are for its own heapless generation.
+type Frame = heapless_v09::Vec<u8, CHAR_CAP>;
 
 #[gatt_server]
 struct Server {
@@ -48,76 +54,42 @@ struct ControlService {
     tx: Frame,
 }
 
-/// Never returns — runs the BLE host + GATT server forever. Also drives the LCD (line 1 = BLE
-/// status since there is no IP in BLE mode; line 2 = firmware build tag).
-pub async fn run(
-    init: &'static EspWifiController<'static>,
-    bt: esp_hal::peripherals::BT<'static>,
+/// Never returns — runs the BLE host + GATT server forever. Publishes the link state via
+/// [`BLE_STATUS`]; the LCD itself is driven by the display loop at the end of `main`.
+#[embassy_executor::task]
+pub async fn ble_task(
+    connector: BleConnector<'static>,
     esp_x25519_secret: StaticSecret,
     esp_signing_key: SigningKey,
     mut rng: Rng,
-    i2c0: esp_hal::peripherals::I2C0<'static>,
-    sda: esp_hal::peripherals::GPIO8<'static>,
-    scl: esp_hal::peripherals::GPIO9<'static>,
 ) -> ! {
-    // Persisted state (mirror main.rs) so role commands work over BLE too.
-    if let Some(saved) = crate::storage::load_roles() {
-        unsafe { crate::state::ROLES = saved };
-        info!("Loaded roles from flash");
-    }
-    if let Some(t) = crate::storage::load_threshold() {
-        unsafe { crate::state::THRESHOLD = t };
-    }
-
-    // LCD (same PCF8574 backpack @0x27 as the UDP path). BLE mode has no IP, so line 1 shows the
-    // BLE connection state instead. Same robust reset as main.rs (warm-flash desync workaround).
-    let mut lcd_i2c = I2c::new(i2c0, I2cConfig::default())
-        .expect("I2C new failed")
-        .with_sda(sda)
-        .with_scl(scl);
-    let mut delay = esp_hal::delay::Delay::new();
-    delay.delay_millis(100);
-    for wait_us in [4500u32, 200, 200] {
-        let _ = lcd_i2c.write(0x27u8, &[0x3Cu8]);
-        delay.delay_micros(1);
-        let _ = lcd_i2c.write(0x27u8, &[0x38u8]);
-        delay.delay_micros(wait_us);
-    }
-    delay.delay_millis(5);
-    let mut sender = I2cSender::new(&mut lcd_i2c, 0x27);
-    let mut lcd = Lcd::new(&mut sender, &mut delay, Default::default(), Default::default());
-
-    let connector = BleConnector::new(init, bt);
+    // Mirrors the upstream trouble-host bas_peripheral example (esp-radio 0.18) with the GATT
+    // service swapped for the command-envelope transport. Deliberately minimal — no LCD/I2C, no
+    // flash reads; restore the LCD + role/threshold load once BLE is confirmed on hardware.
+    info!("BLE min 2: ExternalController::new");
     let controller: ExternalController<_, 20> = ExternalController::new(connector);
-
+    info!("BLE min 3: HostResources::new");
     let mut resources: HostResources<DefaultPacketPool, 1, 2> = HostResources::new();
+    info!("BLE min 4: trouble_host::new + stack.build");
     let stack = trouble_host::new(controller, &mut resources)
-        .set_random_address(Address::random([0xff, 0x11, 0x22, 0x33, 0x44, 0x55]));
+        .set_random_address(Address::random([0xff, 0x11, 0x22, 0x33, 0x44, 0xff]));
     let Host { mut peripheral, runner, .. } = stack.build();
-
+    info!("BLE min 5: Server::new_with_config");
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
         name: "CriticalInfra",
         appearance: &appearance::UNKNOWN,
     }))
     .unwrap();
+    info!("BLE min 6: join(run_host, app) -> advertising");
 
     let app = async {
-        use core::fmt::Write as _;
-        // Line 2: firmware build tag (same as the UDP path's tag; stable across transports).
-        let mut l2 = heapless::String::<16>::new();
-        let _ = write!(&mut l2, "FW {}", env!("FW_SHORT"));
-        while l2.len() < 16 {
-            let _ = l2.push(' ');
-        }
-        lcd.set_cursor_pos((0, 1));
-        lcd.write_str_to_cur(&l2);
         loop {
-            lcd.set_cursor_pos((0, 0));
-            lcd.write_str_to_cur("BLE advertising "); // 16 chars — clears the whole line
+            info!("BLE app: advertising...");
+            BLE_STATUS.store(STATUS_ADVERTISING, core::sync::atomic::Ordering::Relaxed);
             match advertise(&mut peripheral, &server).await {
                 Ok(conn) => {
-                    lcd.set_cursor_pos((0, 0));
-                    lcd.write_str_to_cur("BLE connected   ");
+                    info!("BLE connected");
+                    BLE_STATUS.store(STATUS_CONNECTED, core::sync::atomic::Ordering::Relaxed);
                     serve(&server, &conn, &esp_x25519_secret, &esp_signing_key, &mut rng).await;
                 }
                 Err(e) => info!("BLE advertise error: {:?}", e),
@@ -129,6 +101,7 @@ pub async fn run(
 }
 
 async fn run_host<C: Controller, P: PacketPool>(mut runner: Runner<'_, C, P>) {
+    info!("BLE host: runner.run() starting");
     if let Err(e) = runner.run().await {
         info!("BLE host runner exited: {:?}", e);
     }
@@ -138,20 +111,34 @@ async fn advertise<'a, 'b, C: Controller>(
     peripheral: &mut Peripheral<'a, C, DefaultPacketPool>,
     server: &'b Server<'_>,
 ) -> Result<GattConnection<'a, 'b, DefaultPacketPool>, BleHostError<C::Error>> {
+    // The Swift client discovers the device with a service-UUID-filtered scan
+    // (`scanForPeripherals(withServices:)`), so the 128-bit service UUID MUST be in the
+    // advertisement itself. Flags(3) + Uuid128(18) fills the 31-byte ADV payload; the name
+    // goes into the scan response (CoreBluetooth merges both, scanners still show the name).
+    // Bytes are the GATT service UUID 9e7312e0-2354-11eb-9f10-fbc30a62cf38, little-endian.
+    const SERVICE_UUID_LE: [u8; 16] = [
+        0x38, 0xcf, 0x62, 0x0a, 0xc3, 0xfb, 0x10, 0x9f, 0xeb, 0x11, 0x54, 0x23, 0xe0, 0x12,
+        0x73, 0x9e,
+    ];
     let mut adv_data = [0u8; 31];
     let len = AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            AdStructure::CompleteLocalName(b"CriticalInfra"),
+            AdStructure::ServiceUuids128(&[SERVICE_UUID_LE]),
         ],
         &mut adv_data[..],
+    )?;
+    let mut scan_data = [0u8; 31];
+    let scan_len = AdStructure::encode_slice(
+        &[AdStructure::CompleteLocalName(b"CriticalInfra")],
+        &mut scan_data[..],
     )?;
     let advertiser = peripheral
         .advertise(
             &Default::default(),
             Advertisement::ConnectableScannableUndirected {
                 adv_data: &adv_data[..len],
-                scan_data: &[],
+                scan_data: &scan_data[..scan_len],
             },
         )
         .await?;
@@ -232,7 +219,7 @@ async fn respond(
     let bytes = result.response.as_bytes();
     let total = bytes.len().div_ceil(MAX_CHUNK).max(1);
     for (seq, chunk) in bytes.chunks(MAX_CHUNK).enumerate() {
-        let mut frame: Frame = heapless::Vec::new();
+        let mut frame = Frame::new();
         let _ = frame.push(total as u8);
         let _ = frame.push(seq as u8);
         let _ = frame.extend_from_slice(chunk);

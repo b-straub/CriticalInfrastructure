@@ -17,7 +17,7 @@ pub fn build_signed_response(
     esp_signing_key: &SigningKey,
     client_ephemeral_pub: &[u8; 32],
     rng: &mut Rng,
-) -> heapless::String<2560> {
+) -> alloc::string::String {
     use core::fmt::Write as _;
     #[allow(deprecated)]
     use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -25,11 +25,16 @@ pub fn build_signed_response(
     use aes_gcm::aead::{AeadInPlace, KeyInit};
     use sha2::Digest as _;
 
-    let mut final_response = heapless::String::<2560>::new();
+    // Heap-backed: a full 10-entry labeled LIST_ROLES envelope is ~2.5KB of hex, and
+    // stack-allocating it (plus the plaintext/ciphertext scratch) overflowed the main
+    // task stack. The heap has ample room and this runs once per command.
+    let mut final_response = alloc::string::String::new();
 
     // Sign "resp|<ts>|<message>": binds the response to this request and proves
-    // it originated from this device's signing key.
-    let mut resp_signed = heapless::String::<560>::new();
+    // it originated from this device's signing key. Heap-backed so a large
+    // LIST_ROLES message is signed in full (a fixed buffer would truncate it and
+    // the client's signature check would then fail).
+    let mut resp_signed = alloc::string::String::new();
     let _ = write!(&mut resp_signed, "resp|{}|{}", resp_ts, message);
     let resp_signature = esp_signing_key.sign(resp_signed.as_bytes());
     let mut resp_sig_hex = heapless::String::<128>::new();
@@ -37,8 +42,8 @@ pub fn build_signed_response(
         let _ = write!(&mut resp_sig_hex, "{:02x}", b);
     }
 
-    // Inner plaintext that gets AES-GCM encrypted below: ts;message;sig
-    let mut plaintext = heapless::String::<768>::new();
+    // Inner plaintext that gets AES-GCM encrypted below: ts;message;sig (heap-backed).
+    let mut plaintext = alloc::string::String::new();
     let _ = write!(&mut plaintext, "{};{};{}", resp_ts, message, resp_sig_hex);
 
     // Fresh ephemeral X25519 keypair from the hardware TRNG. Deriving it from a
@@ -65,7 +70,10 @@ pub fn build_signed_response(
     #[allow(deprecated)]
     let nonce = Nonce::from_slice(&iv);
 
-    let mut ciphertext = heapless::Vec::<u8, 1024>::new();
+    // Stays heapless: aes-gcm's `aead::Buffer` is only implemented for heapless::Vec
+    // here (no `alloc` feature). 2KB on the stack is fine now the big hex strings are
+    // heap-backed; max ciphertext for a 10-entry LIST_ROLES is ~1.2KB.
+    let mut ciphertext = heapless::Vec::<u8, 2048>::new();
     let _ = ciphertext.extend_from_slice(plaintext.as_bytes());
 
     #[allow(deprecated)]
@@ -77,7 +85,7 @@ pub fn build_signed_response(
             let _ = write!(&mut iv_hex_out, "{:02x}", b);
         }
 
-        let mut cipher_hex_out = heapless::String::<2048>::new();
+        let mut cipher_hex_out = alloc::string::String::new();
         for b in ciphertext.as_slice() {
             let _ = write!(&mut cipher_hex_out, "{:02x}", b);
         }

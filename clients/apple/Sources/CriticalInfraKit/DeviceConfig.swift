@@ -6,6 +6,29 @@ public enum TransportKind: String, Codable, Sendable, CaseIterable {
     case ble   // Bluetooth LE GATT (no network)
 }
 
+/// The shareable device descriptor emitted by `provision/show-device-keys.sh` —
+/// the device's PUBLIC identity (no secrets). All fields optional so partial
+/// descriptors import cleanly; `criticalinfra` is a version tag the app checks.
+public struct DeviceDescriptor: Codable, Sendable {
+    public var criticalinfra: Int?
+    public var host: String?
+    public var port: UInt16?
+    public var espX25519PubHex: String?
+    public var espSigPubHex: String?
+    public var bleName: String?
+}
+
+public enum ImportError: Error, CustomStringConvertible {
+    case notADeviceConfig
+    case badKey(String)
+    public var description: String {
+        switch self {
+        case .notADeviceConfig: return "Not a CriticalInfra device config."
+        case .badKey(let which): return "\(which) key must be 64 hex characters."
+        }
+    }
+}
+
 /// Connection target + the device's public keys. The client's own identity is
 /// its Secure Enclave key (see `EnclaveSigner`), so no user/supervisor key lives
 /// here — provisioning is baking the enclave pubkey into the firmware or
@@ -24,6 +47,14 @@ public struct DeviceConfig: Codable, Equatable, Sendable {
     /// Absolute path to the CriticalInfrastructure repo checkout — locates `provision/*.sh` for
     /// the macOS Showcase panel. Empty until the user picks it (Settings → Provisioning).
     public var repoPath: String
+    /// This device's key label for role enrollment (LIST_ROLES `role@label`). Empty →
+    /// derived from the OS device name (`Command.localDeviceLabel()`).
+    public var deviceName: String
+    /// User nicknames for hardware/PIV keys, keyed by the key's 66-hex compressed pubkey.
+    /// The card carries no free-form name (keyroost's is private), so this is where a
+    /// friendly token name like "ESP32_S3_Master" lives — it becomes the key label when
+    /// provisioning that token as a role.
+    public var tokenNicknames: [String: String]
 
     /// Vendor GATT service + characteristic UUIDs, matching `target-esp32s3/src/ble.rs`.
     public static let bleServiceUUID = "9E7312E0-2354-11EB-9F10-FBC30A62CF38"
@@ -37,7 +68,9 @@ public struct DeviceConfig: Codable, Equatable, Sendable {
         espX25519PubHex: String = "",
         espSigPubHex: String = "",
         bleName: String = "CriticalInfra",
-        repoPath: String = ""
+        repoPath: String = "",
+        deviceName: String = "",
+        tokenNicknames: [String: String] = [:]
     ) {
         self.transport = transport
         self.host = host
@@ -46,6 +79,8 @@ public struct DeviceConfig: Codable, Equatable, Sendable {
         self.espSigPubHex = espSigPubHex
         self.bleName = bleName
         self.repoPath = repoPath
+        self.deviceName = deviceName
+        self.tokenNicknames = tokenNicknames
     }
 
     // Tolerant decoding so adding a field (e.g. `repoPath`, `transport`) never wipes an older
@@ -59,6 +94,8 @@ public struct DeviceConfig: Codable, Equatable, Sendable {
         espSigPubHex = try c.decodeIfPresent(String.self, forKey: .espSigPubHex) ?? ""
         bleName = try c.decodeIfPresent(String.self, forKey: .bleName) ?? "CriticalInfra"
         repoPath = try c.decodeIfPresent(String.self, forKey: .repoPath) ?? ""
+        deviceName = try c.decodeIfPresent(String.self, forKey: .deviceName) ?? ""
+        tokenNicknames = try c.decodeIfPresent([String: String].self, forKey: .tokenNicknames) ?? [:]
     }
 
     /// The device keys are always required. UDP additionally needs a host; BLE needs a name.
@@ -70,6 +107,26 @@ public struct DeviceConfig: Codable, Equatable, Sendable {
         return !addressed
             || espX25519PubHex.count != 64
             || espSigPubHex.count != 64
+    }
+
+    /// Apply an imported device descriptor (from `provision/show-device-keys.sh`):
+    /// only the device's public identity (keys, and optionally host/name) is
+    /// overwritten — the client's own transport choice, device name, and token
+    /// nicknames are left untouched. Throws on malformed JSON or bad key lengths.
+    public mutating func apply(importJSON data: Data) throws {
+        let imp = try JSONDecoder().decode(DeviceDescriptor.self, from: data)
+        guard imp.criticalinfra != nil else { throw ImportError.notADeviceConfig }
+        if let k = imp.espX25519PubHex {
+            guard k.count == 64 else { throw ImportError.badKey("X25519") }
+            espX25519PubHex = k.lowercased()
+        }
+        if let k = imp.espSigPubHex {
+            guard k.count == 64 else { throw ImportError.badKey("Ed25519") }
+            espSigPubHex = k.lowercased()
+        }
+        if let h = imp.host, !h.isEmpty { host = h }
+        if let n = imp.bleName, !n.isEmpty { bleName = n }
+        if let p = imp.port { port = p }
     }
 
     private static let key = "criticalinfra.deviceconfig"

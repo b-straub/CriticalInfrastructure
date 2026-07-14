@@ -23,7 +23,8 @@ use crate::state::*;
 /// of here lets this module stay free of the concrete driver types.
 pub struct ProcessResult {
     /// `<eph_pub>;<iv>;<ciphertext+tag>` (hex) -- send this back to the peer.
-    pub response: heapless::String<2560>,
+    /// Heap-backed (see crypto.rs): stack-allocating it overflowed the main task stack.
+    pub response: alloc::string::String,
     /// LED ring color to show now (Some only when a command was authorized).
     pub led: Option<[RGB8; 8]>,
     /// LCD line-2 status text (None when the envelope failed before dispatch).
@@ -100,7 +101,7 @@ pub fn process_envelope(
     }
 
     let mut response_msg = "Invalid Crypto Envelope";
-    let mut dynamic_msg = heapless::String::<512>::new();
+    let mut dynamic_msg = heapless::String::<1024>::new();
     // Timestamp of the incoming command, echoed and signed into the response so
     // the client can bind the response to its request.
     let mut resp_ts = heapless::String::<24>::new();
@@ -288,7 +289,7 @@ pub fn process_envelope(
 
     // Build, sign, and encrypt the response (see crypto.rs). Even rejections are
     // returned as a signed envelope so the client sees a consistent reply.
-    let mut resp_message = heapless::String::<512>::new();
+    let mut resp_message = heapless::String::<1024>::new();
     if !dynamic_msg.is_empty() {
         let _ = write!(&mut resp_message, "{}", dynamic_msg);
     } else {

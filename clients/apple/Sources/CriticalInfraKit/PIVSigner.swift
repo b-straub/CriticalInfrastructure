@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import Security
 
 public enum PIVError: Error, CustomStringConvertible {
@@ -27,9 +28,18 @@ public enum PIVError: Error, CustomStringConvertible {
 public final class PIVSigner: CommandSigner, @unchecked Sendable {
     private let privateKey: SecKey
     private let compressedPublicKey: Data
+    /// One authentication context shared by every signature this instance makes,
+    /// so the PIV PIN entered for the first signature is reused for the next few
+    /// (e.g. provisioning signs the role certificate *and* the ADD_ROLE command —
+    /// one PIN instead of two). The context is held for the signer's lifetime; the
+    /// reuse duration also covers Touch-ID-backed keys.
+    private let context: LAContext
 
     public init() throws {
-        guard let found = Self.findKey() else { throw PIVError.noKey }
+        let ctx = LAContext()
+        ctx.touchIDAuthenticationAllowableReuseDuration = 30
+        guard let found = Self.findKey(context: ctx) else { throw PIVError.noKey }
+        context = ctx
         privateKey = found.0
         compressedPublicKey = found.1
     }
@@ -59,11 +69,40 @@ public final class PIVSigner: CommandSigner, @unchecked Sendable {
 
     /// Compressed P-256 pubkey hex of an inserted smart-card key, or nil if none.
     /// Silent — reading the public key does not prompt for a PIN.
-    public static func detect() -> String? { findKey()?.1.hexString }
+    public static func detect() -> String? { findKey(context: nil)?.1.hexString }
+
+    /// Human-readable name of the inserted token's P-256 key, from the subject of
+    /// the certificate paired with it in the slot (e.g. "CriticalInfra Supervisor").
+    /// Used to prefill the role's key label when provisioning a hardware key.
+    public static func tokenKeyName() -> String? {
+        guard let (privateKey, _) = findKey(context: nil),
+              let publicKey = SecKeyCopyPublicKey(privateKey),
+              let keyX963 = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
+            return nil
+        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassCertificate,
+            kSecAttrAccessGroup as String: kSecAttrAccessGroupToken,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnRef as String: true
+        ]
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
+              let certs = out as? [SecCertificate] else { return nil }
+        for cert in certs {
+            guard let certKey = SecCertificateCopyKey(cert),
+                  let certX963 = SecKeyCopyExternalRepresentation(certKey, nil) as Data?,
+                  certX963 == keyX963 else { continue }
+            return SecCertificateCopySubjectSummary(cert) as String?
+        }
+        return nil
+    }
 
     /// Find the first ECC P-256 private key exposed by a smart-card token.
-    private static func findKey() -> (SecKey, Data)? {
-        let query: [String: Any] = [
+    /// Pass a shared `LAContext` for the signing instance so repeated signatures
+    /// reuse one PIN entry; pass nil for silent lookups (detect / tokenKeyName).
+    private static func findKey(context: LAContext?) -> (SecKey, Data)? {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassKey,
             kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
@@ -71,6 +110,9 @@ public final class PIVSigner: CommandSigner, @unchecked Sendable {
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnRef as String: true
         ]
+        if let context {
+            query[kSecUseAuthenticationContext as String] = context
+        }
         var out: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
               let keys = out as? [SecKey] else { return nil }
