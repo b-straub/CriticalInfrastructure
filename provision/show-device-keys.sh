@@ -19,7 +19,14 @@ set -euo pipefail
 find_port() {
   ls /dev/cu.usbmodem* /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART* 2>/dev/null | head -1 || true
 }
-PORT="${1:-$(find_port)}"
+# Accept `--port <dev>` (used by the in-app Showcase) or a bare positional port; else auto-detect.
+PORT=""
+case "${1:-}" in
+  --port) PORT="${2:-}";;
+  "") ;;
+  *) PORT="$1";;
+esac
+[ -n "$PORT" ] || PORT="$(find_port)"
 [ -n "$PORT" ] || { echo "No serial port found. Connect the board (UART port) or pass it: $0 /dev/cu.XXXX"; exit 1; }
 echo "==> Reading keys from $PORT (resetting the board; ~6s)…"
 

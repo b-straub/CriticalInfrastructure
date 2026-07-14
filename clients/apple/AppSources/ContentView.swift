@@ -125,7 +125,7 @@ private struct ConfigForm: View {
             } header: {
                 Text("Device")
             } footer: {
-                Text("Run provision/show-device-keys.sh — it copies the device's public keys (and IP) as JSON. Universal Clipboard carries it from your Mac to a nearby iPhone/iPad.")
+                Text("Don't have the device's keys? On the Mac run  provision/show-device-keys.sh  — it reads the Ed25519 + X25519 public keys off the board and copies them here as JSON. Universal Clipboard carries them to a nearby iPhone/iPad; then tap Import config.")
             }
 
             Section {

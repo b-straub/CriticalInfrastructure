@@ -296,6 +296,15 @@ public enum ShowcaseCatalog {
         blurb: "After provisioning, the ONLY way to change firmware. Build + sign + deliver a signed, encrypted image over the network into the inactive slot, verified before activation.",
         steps: [
             ShowcaseStep(
+                id: "ota.devicekeys",
+                title: "Read device public keys",
+                rationale: "Reads the device's own public keys off the serial boot log — the Ed25519 response-signing key and the X25519 ROM key — which the client needs to talk to it. They're derived on-chip from the eFuse HMAC root, so this is the only way to get them. Copies them to the clipboard as JSON; import via Settings › Import config.",
+                script: "show-device-keys.sh",
+                args: [.port],
+                mode: .terminal,
+                terminalHint: "Press RESET on the board when prompted (or `pip3 install pyserial` for an automatic reset)."
+            ),
+            ShowcaseStep(
                 id: "ota.storecreds",
                 title: "Store credentials",
                 rationale: "Saves the device IP (and, if given, Wi-Fi + supervisor key) in the macOS Keychain so the update commands need no arguments.",
