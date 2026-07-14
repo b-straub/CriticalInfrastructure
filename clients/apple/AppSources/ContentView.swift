@@ -314,7 +314,6 @@ private struct SupervisorPanel: View {
                         RoleManageRow(
                             role: role,
                             onDevice: model.deviceHasRole(role),
-                            labels: model.deviceLabels(for: role),
                             hasLocalKey: model.availableRoles.contains(role),
                             onRegister: { model.registerRole(role) },
                             onRevoke: { model.revokeRole(role) }
@@ -584,24 +583,25 @@ private struct IdentityCard: View {
     }
 }
 
-/// One row in the Supervisor's Roles list. Reflects the DEVICE's truth from the last
-/// LIST_ROLES (`onDevice`) — not merely which enclave keys exist locally — so it stays
-/// consistent with the device's Response. `onDevice == nil` means "not refreshed yet".
+/// One row in the Supervisor's Roles list, scoped to THIS device. `onDevice` is the last
+/// LIST_ROLES truth filtered to this device's key label (so the iPhone sees only its own
+/// roles, never the Mac's), and Register/Revoke act on this device's key alone.
+/// `onDevice == nil` means "not refreshed yet".
 private struct RoleManageRow: View {
     let role: Role
-    let onDevice: Bool?          // nil = unknown (tap Refresh); else device truth
-    let labels: [String]         // device key labels for this role (e.g. ["Mac", "iPad-01"])
+    let onDevice: Bool?          // this device's registration: nil = unknown (tap Refresh)
     let hasLocalKey: Bool        // an enclave key for this role exists on this device
     let onRegister: () -> Void
     let onRevoke: () -> Void
 
-    /// The state we act on: device truth if known, else the local-key fallback.
+    /// Device truth wins when known; before a Refresh we fall back to the local key. Either
+    /// way this only ever reflects THIS device — the destructive Revoke can't touch another's.
     private var registered: Bool { onDevice ?? hasLocalKey }
 
     private var subtitle: String {
         switch onDevice {
-        case .some(true):  return labels.isEmpty ? "On device" : "On device · " + labels.joined(separator: ", ")
-        case .some(false): return "Not on device"
+        case .some(true):  return "Registered on this device"
+        case .some(false): return hasLocalKey ? "Local key not on device — Register to add" : "Not on this device"
         case .none:        return hasLocalKey ? "Local key — tap Refresh to confirm" : "Not registered"
         }
     }
@@ -618,15 +618,19 @@ private struct RoleManageRow: View {
             }
             Spacer()
             if registered {
+                // Revokes only THIS device's (role, label) entry — never another device's.
                 Button("Revoke", role: .destructive, action: onRevoke)
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(.red)
+                    .help("Remove this device's key for \(role.rawValue) from the device")
             } else {
+                // Creates a key on THIS device and registers it (coexists with other devices').
                 Button("Register", action: onRegister)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(role.tint)
+                    .help("Create a key on this device and register it for \(role.rawValue)")
             }
         }
         .padding(.vertical, 8)

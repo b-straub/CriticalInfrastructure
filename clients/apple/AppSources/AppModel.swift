@@ -193,10 +193,16 @@ final class AppModel {
                 let resp = await client.send(cmd)
                 lastResponse = resp
                 availableRoles = Self.loadAvailableRoles()
-                // Optimistically reflect the grant in the device-roles view (if we've fetched it).
-                if resp.contains("Added Securely"), deviceRoles != nil {
-                    deviceRoles?.removeAll { $0.name == role.rawValue && $0.label == resolvedDeviceLabel }
-                    deviceRoles?.append(Command.DeviceRole(name: role.rawValue, label: resolvedDeviceLabel))
+                // Optimistically reflect the grant in the device-roles view (only if we've fetched
+                // it — nil means "unknown", leave it so other rows keep their local-key fallback).
+                // Whole-value reassignment (not `deviceRoles?.append`) so @Observable reliably sees
+                // the mutation and re-renders the row immediately, without a Refresh round-trip.
+                if resp.contains("Added Securely"), var roles = deviceRoles {
+                    let mine = resolvedDeviceLabel
+                    roles.removeAll { $0.name == role.rawValue && $0.label == mine }
+                    roles.append(Command.DeviceRole(
+                        name: role.rawValue, label: mine, pubkeyHex: roleKey.publicKeyHex))
+                    deviceRoles = roles
                 }
             } catch {
                 // Don't leave a half-created local key if provisioning failed.
@@ -207,20 +213,24 @@ final class AppModel {
         }
     }
 
+    /// Revoke ONLY this device's key for `role` — targeted as `role@thisDeviceLabel`, so it
+    /// never removes another device's same-named role. Also drops the local enclave key.
     func revokeRole(_ role: Role) {
         guard let supervisor = signer, activeRole == .supervisor else { return }
+        let label = resolvedDeviceLabel
         let cfg = config
         Task {
             busy = true
             defer { busy = false }
             let client = DeviceClient(config: cfg, signer: supervisor)
-            let resp = await client.send(Command.revokeRole(name: role.rawValue))
-            EnclaveSigner.reset(id: role.rawValue) // drop the local key too
+            let resp = await client.send(Command.revokeRole(roleAtLabel: "\(role.rawValue)@\(label)"))
+            EnclaveSigner.reset(id: role.rawValue) // drop this device's local key too
             availableRoles = Self.loadAvailableRoles()
             lastResponse = resp
-            // Revoke by role name removes every entry with that role on the device.
-            if resp.contains("revoked"), deviceRoles != nil {
-                deviceRoles?.removeAll { $0.name == role.rawValue }
+            // Whole-value reassignment so @Observable re-renders the row at once (see registerRole).
+            if resp.contains("Revoked"), var roles = deviceRoles {
+                roles.removeAll { $0.name == role.rawValue && $0.label == label }
+                deviceRoles = roles
             }
         }
     }
@@ -229,17 +239,14 @@ final class AppModel {
     /// The role rows show THIS (device truth), not just which enclave keys exist locally.
     var deviceRoles: [Command.DeviceRole]? = nil
 
-    /// True (device has it) / false (doesn't) / nil (not yet refreshed from the device).
+    /// Whether the device has THIS device's key for `role` — scoped to this device's label, so
+    /// each device sees only its own roles (never another device's same-named role). Matched on
+    /// the exact label the precise revoke (`role@label`) targets, so the row and Revoke stay in
+    /// lockstep. nil = not yet refreshed.
     func deviceHasRole(_ role: Role) -> Bool? {
         guard let dr = deviceRoles else { return nil }
-        return dr.contains { $0.name == role.rawValue }
-    }
-
-    /// Key labels the device holds for `role` (e.g. ["Mac", "iPad-01"]); empty if none/unknown.
-    func deviceLabels(for role: Role) -> [String] {
-        (deviceRoles ?? [])
-            .filter { $0.name == role.rawValue }
-            .map { $0.label.isEmpty ? "unlabeled" : $0.label }
+        let mine = resolvedDeviceLabel
+        return dr.contains { $0.name == role.rawValue && $0.label == mine }
     }
 
     /// Whether THIS device's local enclave key for `role` is one the device actually trusts —

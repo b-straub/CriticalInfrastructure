@@ -28,3 +28,6 @@ device-config.json
 # Xcode "Distribute App" export folders + archives
 CriticalInfra 20*/
 *.ipa
+
+# Exported/built app bundles (double-clickable build artifacts — keep out of the repo)
+/Apps/

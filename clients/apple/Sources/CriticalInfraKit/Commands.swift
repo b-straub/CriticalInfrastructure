@@ -38,6 +38,12 @@ public enum Command {
         "REVOKE_ROLE \(name)"
     }
 
+    /// `REVOKE_ROLE Admin@iPhone` — revokes exactly ONE (role, label) entry, so it removes
+    /// only this device's key for the role and never another device's same-named role.
+    public static func revokeRole(roleAtLabel: String) -> String {
+        "REVOKE_ROLE \(roleAtLabel)"
+    }
+
     /// Sanitize a proposed key label to the firmware charset `[A-Za-z0-9._-]`,
     /// max 16 chars (spaces/umlauts become `-`).
     public static func sanitizeLabel(_ raw: String) -> String {

@@ -147,6 +147,14 @@ final class ShowcaseCatalogTests: XCTestCase {
         )
     }
 
+    func testRevokeRoleTargeting() {
+        // Bare name/label form (broad): matches a key label or role name on the device.
+        XCTAssertEqual(Command.revokeRole(name: "Admin"), "REVOKE_ROLE Admin")
+        // Precise per-device form: removes ONLY this (role, label) entry — never another
+        // device's same-named role. This is what the app sends from the Roles list.
+        XCTAssertEqual(Command.revokeRole(roleAtLabel: "Admin@iPhone"), "REVOKE_ROLE Admin@iPhone")
+    }
+
     func testGenericVerdict() {
         XCTAssertEqual(ShowcaseStep.exitZeroPass(0), .pass)
         XCTAssertEqual(ShowcaseStep.exitZeroPass(1), .fail)

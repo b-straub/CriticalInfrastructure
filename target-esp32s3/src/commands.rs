@@ -114,12 +114,22 @@ pub fn dispatch(
             let mut cmd_parts = cmd.split_whitespace();
             cmd_parts.next(); // skip REVOKE_ROLE
             if let Some(target) = cmd_parts.next() {
-                // The target is a key label first (revokes exactly that key's entry),
-                // else a role name (revokes ALL entries holding that role —
-                // deterministic when several keys share it).
+                // Three targeting modes, in order of precision:
+                //   "role@label" -> exactly ONE (role, label) entry (one device's key). This is
+                //                   what a client uses to drop only its own key, never another
+                //                   device's same-named role.
+                //   "label"      -> all entries with that key label (one device, every role).
+                //   "role"       -> all entries holding that role name (every device).
                 let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
                 let before = roles.len();
-                if roles.iter().any(|r| !r.label.is_empty() && r.label == target) {
+                if let Some((t_role, t_label)) = target.split_once('@') {
+                    roles.retain(|r| !(r.name == t_role && r.label == t_label));
+                    if roles.len() < before {
+                        let _ = write!(dynamic_msg, "Revoked {}@{}", t_role, t_label);
+                    } else {
+                        let _ = write!(dynamic_msg, "{}@{} not found", t_role, t_label);
+                    }
+                } else if roles.iter().any(|r| !r.label.is_empty() && r.label == target) {
                     roles.retain(|r| r.label != target);
                     let _ = write!(dynamic_msg, "Key {} revoked", target);
                 } else {
