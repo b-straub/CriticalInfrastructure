@@ -24,7 +24,8 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; done
 load_creds # fill SSID/PASS/SUP from the Keychain if not given (provision/store-creds.sh)
 [ -n "$SSID" ] && [ -n "$PASS" ] && [ -n "$SUP" ] || die "--ssid/--pass/--supervisor required (or store once: provision/store-creds.sh)"
-require_port "$PORT"; need esptool "brew install esptool"
+[ -n "$PORT" ] || PORT="$(find_port)"   # auto-detect like the other stages
+require_port "$PORT"; echo "==> board port: $PORT"; need esptool "brew install esptool"
 SUPHEX="$(supervisor_to_hex "$SUP")"
 IFS=',' read -r PRIMARY BACKUP _ <<< "$KEYS"
 [ -f "$(key_ini "$PRIMARY")" ] || die "key '$PRIMARY' not enrolled (provision/1-enroll-key.sh --name $PRIMARY)"
