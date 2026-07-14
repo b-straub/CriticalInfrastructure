@@ -81,11 +81,16 @@ pub fn dispatch(
                     cert_sig: new_cert,
                     label: label_str,
                 };
-                // Entry identity = pubkey OR key label (both stay unique): re-granting
-                // a key replaces its entry, re-using a label replaces that entry.
-                // Different keys with the same role coexist as separate entries.
+                // Entry identity = pubkey, OR the (role, label) pair. One device/key
+                // home (label) holds SEVERAL roles (Admin@Mac AND Observer@Mac), so the
+                // label alone is NOT unique — only (role, label) is. Replace an entry
+                // when the new grant re-uses its key, or re-grants the same role on the
+                // same home. Different roles on one home, and the same role on different
+                // homes, both coexist.
                 let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
-                roles.retain(|e| e.pubkey != entry.pubkey && e.label != entry.label);
+                roles.retain(|e| {
+                    e.pubkey != entry.pubkey && !(e.name == entry.name && e.label == entry.label)
+                });
                 let _ = roles.push(entry);
 
                 storage::save_roles(unsafe { &*core::ptr::addr_of!(ROLES) });
