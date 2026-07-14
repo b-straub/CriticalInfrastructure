@@ -14,18 +14,18 @@
 #   --app-offset <hex>  app slot (default: 0x20000)
 source "$(dirname "$0")/lib.sh"
 
-SSID="" PASS="" SUP="" PORT="" KEYS="mainToken,backupToken" FEATURES="udp-transport,efuse-hmac-identity" OFF="$APP_OFFSET_DEFAULT" FORCE=""
+SSID="" PASS="" SUP="" PORT="" KEYS="mainToken,backupToken" FEATURES="udp-transport,efuse-hmac-identity" OFF="$APP_OFFSET_DEFAULT" ENCRYPT=0
 while [ $# -gt 0 ]; do case "$1" in
   --ssid) SSID="$2"; shift 2;; --pass) PASS="$2"; shift 2;; --supervisor) SUP="$2"; shift 2;;
   --port) PORT="$2"; shift 2;; --keys) KEYS="$2"; shift 2;;
   --features) FEATURES="$2"; shift 2;; --app-offset) OFF="$2"; shift 2;;
-  # Needed on a board that has flash encryption + Secure Download Mode but is NOT yet
-  # release-sealed: esptool can't read eFuses (SDM) to confirm the write will be
-  # auto-encrypted, so it refuses plaintext writes without --force. Safe ONLY while
-  # download-mode auto-encrypt is still on (i.e. before stage 6 burns
-  # DIS_DOWNLOAD_MANUAL_ENCRYPT and the "plaintext flashes left" count hits 0);
-  # the ROM then encrypts the write. Do NOT use on a fully release-sealed board.
-  --force) FORCE="--force"; shift;;
+  # Use on a board that already has flash encryption enabled (dev mode, "N plaintext
+  # flashes left") but is NOT yet release-sealed. The ROM encrypts the write, so the
+  # decrypt-on-boot yields the right image. NEVER flash such a board plaintext — the
+  # bootloader then decrypts garbage ("invalid magic byte" boot loop). Adds
+  # --encrypt and --no-stub (Secure Download Mode has no flasher stub). No effect on a
+  # non-encrypted board; won't work once DIS_DOWNLOAD_MANUAL_ENCRYPT is burned (stage 6).
+  --encrypt) ENCRYPT=1; shift;;
   -h|--help) show_help "$0"; exit 0;;
   *) die "unknown arg: $1 (see --help)";;
 esac; done
@@ -56,7 +56,11 @@ SKIP_BACKUP="$([ -n "${BACKUP:-}" ] && echo 0 || echo 1)" \
   "$SB/sign-secure-boot.sh" "$WORK/app.bin" "$WORK/app-signed.bin"
 
 note "4/4 flash signed app @ $OFF on $PORT"
-esptool --chip esp32s3 --port "$PORT" --after hard_reset write_flash $FORCE "$OFF" "$WORK/app-signed.bin"
+if [ "$ENCRYPT" = 1 ]; then
+  esptool --chip esp32s3 --port "$PORT" --no-stub --after hard_reset write_flash --encrypt "$OFF" "$WORK/app-signed.bin"
+else
+  esptool --chip esp32s3 --port "$PORT" --after hard_reset write_flash "$OFF" "$WORK/app-signed.bin"
+fi
 echo
 echo "OK — watch it boot:  cat $PORT"
 echo "     expect: 'Signature verified successfully!' -> 'Starting...' -> 'Got IP'"
