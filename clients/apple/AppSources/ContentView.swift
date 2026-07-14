@@ -276,7 +276,7 @@ private struct SupervisorPanel: View {
                         .font(.callout.monospaced())
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
-                    TextField("Device label, e.g. iPad-01 (optional)", text: $externalDevice)
+                    TextField("Device label, e.g. iPad-01 (required)", text: $externalDevice)
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                     if let hw = model.hardwareKeyPubHex {
@@ -299,7 +299,9 @@ private struct SupervisorPanel: View {
                                 device: externalDevice)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(externalPubkey.count != 66)
+                        .disabled(
+                            externalPubkey.count != 66
+                                || externalDevice.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
             } label: {

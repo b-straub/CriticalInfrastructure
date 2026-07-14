@@ -58,11 +58,13 @@ pub fn dispatch(
                 valid_parse = false;
             }
 
-            // Optional 4th arg: device label ("iPad-01") so the same role can be
+            // REQUIRED 4th arg: device label ("iPad-01") so the same role can be
             // granted to several devices and LIST/REVOKE can tell them apart. Charset
             // is restricted (no whitespace/';') so it survives the envelope framing.
+            // No label -> no role: unlabeled entries only exist as pre-label legacy data.
             let device = cmd_parts.next().unwrap_or("");
-            let device_ok = device.len() <= 16
+            let device_ok = !device.is_empty()
+                && device.len() <= 16
                 && device
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
@@ -82,10 +84,7 @@ pub fn dispatch(
                 // a key replaces its entry, re-using a label replaces that device's entry.
                 // Different devices with the same role coexist as separate entries.
                 let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
-                roles.retain(|e| {
-                    e.pubkey != entry.pubkey
-                        && (entry.device.is_empty() || e.device != entry.device)
-                });
+                roles.retain(|e| e.pubkey != entry.pubkey && e.device != entry.device);
                 let _ = roles.push(entry);
 
                 storage::save_roles(unsafe { &*core::ptr::addr_of!(ROLES) });
@@ -93,6 +92,8 @@ pub fn dispatch(
                 response_msg = "Role Added Securely";
                 allowed = true;
                 color_name = "System";
+            } else if device.is_empty() {
+                response_msg = "Missing device label";
             } else {
                 response_msg = "Invalid Role Data Format";
             }

@@ -21,15 +21,14 @@ public enum Command {
     }
 
     /// e.g. `ADD_ROLE Operator <pk_hex64> <cert_hex128> iPad-01`
-    /// The optional device label lets several devices hold the same role and shows
-    /// up in `LIST_ROLES` as `name@device`. Metadata, not part of the certificate —
-    /// the supervisor-signed command authenticates it.
+    /// The device label is REQUIRED (the firmware rejects an unlabeled grant): it
+    /// lets several devices hold the same role and shows up in `LIST_ROLES` as
+    /// `name@device`. Metadata, not part of the certificate — the supervisor-signed
+    /// command authenticates it.
     public static func addRole(
-        name: String, pubkeyHex: String, certSigHex: String, device: String? = nil
+        name: String, pubkeyHex: String, certSigHex: String, device: String
     ) -> String {
-        var cmd = "ADD_ROLE \(name) \(pubkeyHex) \(certSigHex)"
-        if let device, !device.isEmpty { cmd += " \(device)" }
-        return cmd
+        "ADD_ROLE \(name) \(pubkeyHex) \(certSigHex) \(device)"
     }
 
     /// e.g. `REVOKE_ROLE iPad-01` or `REVOKE_ROLE Operator` — the firmware

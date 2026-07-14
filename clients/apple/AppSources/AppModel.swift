@@ -182,15 +182,19 @@ final class AppModel {
             lastResponse = "Public key must be 66 hex characters (compressed P-256)."
             return
         }
+        let sanitized = device.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sanitized.isEmpty else {
+            lastResponse = "A device label is required (e.g. iPad-01) — the firmware rejects unlabeled grants."
+            return
+        }
         let cfg = config
         Task {
             busy = true
             defer { busy = false }
             do {
-                let sanitized = device.trimmingCharacters(in: .whitespacesAndNewlines)
                 let cmd = try Provisioning.addRoleCommand(
                     role: role.rawValue, newPublicKeyHex: pk, supervisor: supervisor,
-                    device: sanitized.isEmpty ? nil : sanitized)
+                    device: sanitized)
                 let client = DeviceClient(config: cfg, signer: supervisor)
                 lastResponse = await client.send(cmd)
             } catch {
