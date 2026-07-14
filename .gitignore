@@ -22,3 +22,9 @@ __pycache__/
 
 # Exported macOS .app (double-clickable build artifact — keep out of the repo)
 /CriticalInfra/
+
+# Generated device descriptor from provision/show-device-keys.sh (public keys, per-device)
+device-config.json
+# Xcode "Distribute App" export folders + archives
+CriticalInfra 20*/
+*.ipa
