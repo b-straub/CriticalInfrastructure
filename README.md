@@ -41,6 +41,7 @@ graph TD
     LCD["I2C 16x2 LCD Display<br>(Status / IP Address)"]:::display
     DHT11["DHT11 Temp / Humidity Sensor<br>(10kΩ DATA pull-up)"]:::sensor
     USB["USB-C Power / Data<br>(Secure Flashing)"]:::usb
+    Switch["Slide Switch<br>(Transport Select: Wi-Fi / BLE)"]:::usb
 
     %% Connections
     USB -->|"Power / Firmware"| ESP
@@ -53,18 +54,37 @@ graph TD
 
     %% DHT11 Sensor Connection Bundle
     ESP -->|"<b>Sensor Header</b><br>🟥 Red: VCC (3V3)<br>⬛ Black: GND<br>⬜ White: DATA (GPIO 21)<br>↕️ 10kΩ pull-up (VCC ↔ DATA)"| DHT11
+
+    %% Transport Select Switch (read once at boot; internal pull-up, active-low)
+    ESP -->|"<b>Transport Switch</b><br>🟧 Orange: GPIO 10 (internal pull-up)<br>⬛ Black: GND<br>open → Wi-Fi/UDP · closed → BLE"| Switch
     
     %% Action Blocks (Styled instead of grey self-loops)
     RingAction("Illuminates based on RBAC Command Escalation:<br>🟩 Green -> Read Sensor Data<br>🟨 Yellow -> Override Safety Thresholds<br>🟥 Red -> Initiate Emergency Shutdown"):::action
     LCDAction("Displays: IP & Auth Result<br>Line 1: 192.168.x.x (DHCP)<br>Line 2: 'User Green Pass'<br>or 'Yellow Rejected'"):::action
     SensorAction("READ_SENSOR command:<br>🟩 Reads temperature + humidity from DHT11<br>Shown on LCD: 'Temp: 24.9C, RH: 47%'<br>🟥 Raises alarm if temp exceeds SET_THRESHOLD"):::action
+    SwitchAction("Read once at boot — exactly ONE radio runs:<br>📶 open (HIGH) → Wi-Fi/UDP · LCD line 1: DHCP IP<br>🛜 closed (LOW) → BLE GATT · LCD line 1: link status<br>OTA updates require Wi-Fi/UDP mode"):::action
     
     Ring ===> RingAction
     LCD ===> LCDAction
     DHT11 ===> SensorAction
+    Switch ===> SwitchAction
 ```
 
 ![Hardware Setup](assets/hardware_setup.jpg)
+
+### Transport select — one switch, two radios
+
+A slide switch between **GPIO10 and GND** picks the transport at boot (internal pull-up,
+active-low; see [`docs/formal/BLE-TRANSPORT.md`](docs/formal/BLE-TRANSPORT.md)):
+
+![Transport select switch (GPIO10 to GND)](assets/transport_switch.jpg)
+
+| Wi-Fi/UDP mode (switch open) | BLE mode (switch closed) |
+| --- | --- |
+| ![UDP mode: LCD shows the DHCP IP](assets/mode_udp.jpg) | ![BLE mode: LCD shows the BLE link status](assets/mode_ble.jpg) |
+| LCD line 1: DHCP IP — drive it over the LAN | LCD line 1: BLE link status — no network needed |
+
+Line 2 is identical in both modes: live temperature/humidity plus the firmware build tag.
 
 ## Building & Running
 
