@@ -23,7 +23,8 @@ use crate::state::*;
 /// of here lets this module stay free of the concrete driver types.
 pub struct ProcessResult {
     /// `<eph_pub>;<iv>;<ciphertext+tag>` (hex) -- send this back to the peer.
-    pub response: heapless::String<4288>,
+    /// Heap-backed (see crypto.rs): stack-allocating it overflowed the main task stack.
+    pub response: alloc::string::String,
     /// LED ring color to show now (Some only when a command was authorized).
     pub led: Option<[RGB8; 8]>,
     /// LCD line-2 status text (None when the envelope failed before dispatch).

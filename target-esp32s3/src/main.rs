@@ -2,6 +2,11 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+// The signed-response builder puts its large hex buffers on the heap (esp_alloc),
+// not the stack: on the widened LIST_ROLES buffers they overflowed the main task
+// stack and hung command processing on both transports. See crypto.rs / protocol.rs.
+extern crate alloc;
+
 esp_bootloader_esp_idf::esp_app_desc!();
 
 use embassy_executor::Spawner;
