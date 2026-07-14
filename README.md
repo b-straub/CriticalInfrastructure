@@ -82,7 +82,7 @@ active-low; see [`docs/formal/BLE-TRANSPORT.md`](docs/formal/BLE-TRANSPORT.md)):
 | Wi-Fi/UDP mode (switch open) | BLE mode (switch closed) |
 | --- | --- |
 | ![UDP mode: LCD shows the DHCP IP](assets/mode_udp.jpg) | ![BLE mode: LCD shows the BLE link status](assets/mode_ble.jpg) |
-| LCD line 1: DHCP IP — drive it over the LAN | LCD line 1: BLE link status — no network needed |
+| LCD line 1: DHCP IP — drive it over the WLAN | LCD line 1: BLE link status — no network needed |
 
 Line 2 is identical in both modes: live temperature/humidity plus the firmware build tag.
 
