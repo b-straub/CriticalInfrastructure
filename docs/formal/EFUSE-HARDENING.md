@@ -210,6 +210,12 @@ espefuse burn-efuse DIS_USB_JTAG 1     # disable USB-Serial-JTAG's JTAG (USB-CDC
 ```
 
 ### Stage 4 — lock external read (POINT OF NO RETURN for dumps)
+> ⚠ **Order:** do this **after Secure Boot v2 is enabled** (see
+> [`SECURE-BOOT-V2.md`](./SECURE-BOOT-V2.md) Phase B). `ENABLE_SECURITY_DOWNLOAD`
+> blocks all eFuse **reads**, and `espefuse burn-key SECURE_BOOT_DIGEST*` must read
+> eFuses — so once this is burned, Secure Boot can no longer be added to the board.
+> In the scripted runbook this lands in stage 6 (`provision/6-release-seal.sh`),
+> never stage 2.
 ```sh
 espefuse burn-efuse ENABLE_SECURITY_DOWNLOAD 1
 ```
