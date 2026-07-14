@@ -546,24 +546,20 @@ private struct IdentityCard: View {
             }
             .buttonStyle(.plain)
 
-            // Visible per-item menu (Apple's standard for row actions) — no hidden long-press.
+            Image(systemName: "chevron.right")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.tertiary)
+
+            // Direct trash affordance (with a confirmation) — no hidden menu.
             if onForget != nil {
-                Menu {
-                    Button(role: .destructive) { confirmForget = true } label: {
-                        Label("Forget this identity", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+                Button(role: .destructive) { confirmForget = true } label: {
+                    Image(systemName: "trash")
+                        .font(.body)
+                        .foregroundStyle(.red)
                         .contentShape(Rectangle())
                 }
-                .menuIndicator(.hidden)
-                .fixedSize()
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                .buttonStyle(.plain)
+                .help("Forget this identity")
             }
         }
         .padding(14)
