@@ -81,7 +81,7 @@ pub fn load_roles() -> Option<heapless::Vec<RoleEntry, 10>> {
             name: e.name,
             pubkey: e.pubkey,
             cert_sig: e.cert_sig,
-            device: heapless::String::new(),
+            label: heapless::String::new(),
         });
     }
     Some(roles)

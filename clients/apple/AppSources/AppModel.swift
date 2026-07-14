@@ -135,7 +135,7 @@ final class AppModel {
                     role: role.rawValue,
                     newPublicKeyHex: roleKey.publicKeyHex,
                     supervisor: supervisor,
-                    device: Command.deviceLabel() // this device's enclave key -> label it
+                    label: Command.localDeviceLabel() // enclave key lives here -> device name
                 )
                 let client = DeviceClient(config: cfg, signer: supervisor)
                 lastResponse = await client.send(cmd)
@@ -170,9 +170,10 @@ final class AppModel {
 
     /// Supervisor provisions an EXTERNAL public key (a hardware key, or another
     /// device's enclave key) as a role — no local key is created here, so the
-    /// private key stays where it lives (the card / the other device). `device`
-    /// optionally labels whose key this is for LIST_ROLES / targeted revocation.
-    func provisionExternal(pubkeyHex: String, as role: Role, device: String = "") {
+    /// private key stays where it lives (the card / the other device). The key
+    /// label (required) names where the key lives — device or token name — for
+    /// LIST_ROLES / targeted revocation.
+    func provisionExternal(pubkeyHex: String, as role: Role, label: String) {
         guard let supervisor = signer, activeRole == .supervisor else {
             lastResponse = "Select the Supervisor identity first."
             return
@@ -182,9 +183,9 @@ final class AppModel {
             lastResponse = "Public key must be 66 hex characters (compressed P-256)."
             return
         }
-        let sanitized = device.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = Command.sanitizeLabel(label.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !sanitized.isEmpty else {
-            lastResponse = "A device label is required (e.g. iPad-01) — the firmware rejects unlabeled grants."
+            lastResponse = "A key label is required (device or token name) — the firmware rejects unlabeled grants."
             return
         }
         let cfg = config
@@ -194,7 +195,7 @@ final class AppModel {
             do {
                 let cmd = try Provisioning.addRoleCommand(
                     role: role.rawValue, newPublicKeyHex: pk, supervisor: supervisor,
-                    device: sanitized)
+                    label: sanitized)
                 let client = DeviceClient(config: cfg, signer: supervisor)
                 lastResponse = await client.send(cmd)
             } catch {

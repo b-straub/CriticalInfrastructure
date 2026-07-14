@@ -225,7 +225,7 @@ private struct SupervisorPanel: View {
     @Bindable var model: AppModel
     @State private var externalPubkey = ""
     @State private var externalRole: Role = .admin
-    @State private var externalDevice = ""
+    @State private var externalLabel = ""
 
     var body: some View {
         CenteredColumn {
@@ -276,11 +276,19 @@ private struct SupervisorPanel: View {
                         .font(.callout.monospaced())
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
-                    TextField("Device label, e.g. iPad-01 (required)", text: $externalDevice)
+                    TextField("Key label — device or token name (required)", text: $externalLabel)
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                     if let hw = model.hardwareKeyPubHex {
-                        Button { externalPubkey = hw } label: {
+                        Button {
+                            externalPubkey = hw
+                            // Prefill the label from the token key's certificate name
+                            // (e.g. "CriticalInfra Supervisor") — the key lives on the
+                            // token, not on this device.
+                            if externalLabel.isEmpty, let name = PIVSigner.tokenKeyName() {
+                                externalLabel = Command.sanitizeLabel(name)
+                            }
+                        } label: {
                             Label("Use inserted hardware key", systemImage: "key.card")
                         }
                         .buttonStyle(.borderless)
@@ -296,12 +304,12 @@ private struct SupervisorPanel: View {
                         Button("Provision") {
                             model.provisionExternal(
                                 pubkeyHex: externalPubkey, as: externalRole,
-                                device: externalDevice)
+                                label: externalLabel)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(
                             externalPubkey.count != 66
-                                || externalDevice.trimmingCharacters(in: .whitespaces).isEmpty)
+                                || externalLabel.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
             } label: {

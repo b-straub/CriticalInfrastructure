@@ -99,16 +99,16 @@ RESP_EPH_PUB_HEX ";" IV_HEX ";" CT_HEX
 ### 1.3 Command set (from `shared::terminology`)
 
 `WHOAMI` · `READ_SENSOR` · `SET_THRESHOLD <f32>` · `CLEAR_ALARM` ·
-`COLOR green|yellow|red` · `ADD_ROLE <role> <pk_hex64> <cert_hex128> <device>` ·
-`REVOKE_ROLE <device|role>` · `LIST_ROLES`. RBAC per command is unchanged; the
+`COLOR green|yellow|red` · `ADD_ROLE <role> <pk_hex64> <cert_hex128> <key_label>` ·
+`REVOKE_ROLE <key_label|role>` · `LIST_ROLES`. RBAC per command is unchanged; the
 caller's role is decided by *which* Ed25519 pubkey verifies the signature, never
 by any field the client asserts.
 
-**Per-device enrollment.** The **required** `device` label
+**Per-key enrollment.** The **required** key label
 (`[A-Za-z0-9._-]{1,16}`, e.g. `iPad-01`) lets several devices hold the *same*
 role with their own keys: the firmware rejects an unlabeled grant ("Missing
-device label"), entries are keyed by pubkey/label (not role name), `LIST_ROLES`
-prints `name@device:pk`, and `REVOKE_ROLE` matches a device label first (that
+key label"), entries are keyed by pubkey/label (not role name), `LIST_ROLES`
+prints `name@label:pk`, and `REVOKE_ROLE` matches a key label first (that
 one entry), then a role name (all entries holding it). The label is metadata
 outside the role certificate — the supervisor-signed ADD_ROLE command
 authenticates it, so existing certificates stay valid. Unlabeled entries can

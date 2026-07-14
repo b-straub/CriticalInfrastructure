@@ -58,33 +58,34 @@ pub fn dispatch(
                 valid_parse = false;
             }
 
-            // REQUIRED 4th arg: device label ("iPad-01") so the same role can be
-            // granted to several devices and LIST/REVOKE can tell them apart. Charset
-            // is restricted (no whitespace/';') so it survives the envelope framing.
-            // No label -> no role: unlabeled entries only exist as pre-label legacy data.
-            let device = cmd_parts.next().unwrap_or("");
-            let device_ok = !device.is_empty()
-                && device.len() <= 16
-                && device
+            // REQUIRED 4th arg: key label — names where the key lives (a device name
+            // for enclave keys, the token/cert name for PIV hardware keys) so the same
+            // role can be held by several keys and LIST/REVOKE can tell them apart.
+            // Charset is restricted (no whitespace/';') so it survives the envelope
+            // framing. No label -> no role: unlabeled entries are pre-label legacy only.
+            let label = cmd_parts.next().unwrap_or("");
+            let label_ok = !label.is_empty()
+                && label.len() <= 16
+                && label
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
 
-            if valid_parse && device_ok {
+            if valid_parse && label_ok {
                 let mut name_str = heapless::String::<16>::new();
                 let _ = name_str.push_str(new_role);
-                let mut device_str = heapless::String::<16>::new();
-                let _ = device_str.push_str(device);
+                let mut label_str = heapless::String::<16>::new();
+                let _ = label_str.push_str(label);
                 let entry = RoleEntry {
                     name: name_str,
                     pubkey: new_pk,
                     cert_sig: new_cert,
-                    device: device_str,
+                    label: label_str,
                 };
-                // Entry identity = pubkey OR device label (both stay unique): re-granting
-                // a key replaces its entry, re-using a label replaces that device's entry.
-                // Different devices with the same role coexist as separate entries.
+                // Entry identity = pubkey OR key label (both stay unique): re-granting
+                // a key replaces its entry, re-using a label replaces that entry.
+                // Different keys with the same role coexist as separate entries.
                 let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
-                roles.retain(|e| e.pubkey != entry.pubkey && e.device != entry.device);
+                roles.retain(|e| e.pubkey != entry.pubkey && e.label != entry.label);
                 let _ = roles.push(entry);
 
                 storage::save_roles(unsafe { &*core::ptr::addr_of!(ROLES) });
@@ -92,8 +93,8 @@ pub fn dispatch(
                 response_msg = "Role Added Securely";
                 allowed = true;
                 color_name = "System";
-            } else if device.is_empty() {
-                response_msg = "Missing device label";
+            } else if label.is_empty() {
+                response_msg = "Missing key label";
             } else {
                 response_msg = "Invalid Role Data Format";
             }
@@ -108,14 +109,14 @@ pub fn dispatch(
             let mut cmd_parts = cmd.split_whitespace();
             cmd_parts.next(); // skip REVOKE_ROLE
             if let Some(target) = cmd_parts.next() {
-                // The target is a device label first (revokes exactly that device's
-                // entry), else a role name (revokes ALL entries holding that role —
-                // deterministic when several devices share it).
+                // The target is a key label first (revokes exactly that key's entry),
+                // else a role name (revokes ALL entries holding that role —
+                // deterministic when several keys share it).
                 let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
                 let before = roles.len();
-                if roles.iter().any(|r| !r.device.is_empty() && r.device == target) {
-                    roles.retain(|r| r.device != target);
-                    let _ = write!(dynamic_msg, "Device {} revoked", target);
+                if roles.iter().any(|r| !r.label.is_empty() && r.label == target) {
+                    roles.retain(|r| r.label != target);
+                    let _ = write!(dynamic_msg, "Key {} revoked", target);
                 } else {
                     roles.retain(|r| r.name != target);
                     if roles.len() < before {
@@ -148,11 +149,11 @@ pub fn dispatch(
                     for b in &r.pubkey {
                         let _ = write!(&mut pk_hex, "{:02x}", b);
                     }
-                    // `name@device:pk` when labeled; legacy entries keep `name:pk`.
-                    if r.device.is_empty() {
+                    // `name@label:pk` when labeled; legacy entries keep `name:pk`.
+                    if r.label.is_empty() {
                         let _ = write!(dynamic_msg, "{}:{},", r.name, pk_hex);
                     } else {
-                        let _ = write!(dynamic_msg, "{}@{}:{},", r.name, r.device, pk_hex);
+                        let _ = write!(dynamic_msg, "{}@{}:{},", r.name, r.label, pk_hex);
                     }
                 }
             }

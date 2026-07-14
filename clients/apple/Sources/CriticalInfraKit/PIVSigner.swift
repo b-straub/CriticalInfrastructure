@@ -61,6 +61,33 @@ public final class PIVSigner: CommandSigner, @unchecked Sendable {
     /// Silent — reading the public key does not prompt for a PIN.
     public static func detect() -> String? { findKey()?.1.hexString }
 
+    /// Human-readable name of the inserted token's P-256 key, from the subject of
+    /// the certificate paired with it in the slot (e.g. "CriticalInfra Supervisor").
+    /// Used to prefill the role's key label when provisioning a hardware key.
+    public static func tokenKeyName() -> String? {
+        guard let (privateKey, _) = findKey(),
+              let publicKey = SecKeyCopyPublicKey(privateKey),
+              let keyX963 = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
+            return nil
+        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassCertificate,
+            kSecAttrAccessGroup as String: kSecAttrAccessGroupToken,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnRef as String: true
+        ]
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
+              let certs = out as? [SecCertificate] else { return nil }
+        for cert in certs {
+            guard let certKey = SecCertificateCopyKey(cert),
+                  let certX963 = SecKeyCopyExternalRepresentation(certKey, nil) as Data?,
+                  certX963 == keyX963 else { continue }
+            return SecCertificateCopySubjectSummary(cert) as String?
+        }
+        return nil
+    }
+
     /// Find the first ECC P-256 private key exposed by a smart-card token.
     private static func findKey() -> (SecKey, Data)? {
         let query: [String: Any] = [
