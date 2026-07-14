@@ -20,7 +20,18 @@ while [ $# -gt 0 ]; do case "$1" in
   -h|--help) show_help "$0"; exit 0;;
   *) die "unknown arg: $1 (see --help)";;
 esac; done
-require_port "$PORT"; need esptool "brew install esptool"; need espefuse "brew install esptool"
+# Auto-detect the board port when --port wasn't given, but ONLY when exactly one
+# candidate is present — this stage burns irreversible eFuses, so we refuse to
+# guess between several devices (unlike the read-only tools' first-match find_port).
+if [ -z "$PORT" ]; then
+  _ports="$(ls /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null || true)"
+  _n="$(printf '%s\n' "$_ports" | grep -c . || true)"
+  if [ "$_n" = "1" ]; then PORT="$_ports"
+  elif [ "$_n" != "0" ]; then die "multiple board ports found — pass --port explicitly:
+$_ports"; fi
+fi
+require_port "$PORT"; echo "==> board port: $PORT"
+need esptool "brew install esptool"; need espefuse "brew install esptool"
 for f in bootloader-signed.bin partition-table.bin app-signed.bin; do
   [ -f "$INDIR/$f" ] || die "missing $INDIR/$f — run provision/3-build-sign.sh first"
 done
