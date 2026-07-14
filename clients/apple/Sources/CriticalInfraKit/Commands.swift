@@ -20,7 +20,7 @@ public enum Command {
         "SET_THRESHOLD \(String(format: "%.1f", celsius))"
     }
 
-    /// e.g. `ADD_ROLE Operator <pk_hex64> <cert_hex128> Bernis-iPad`
+    /// e.g. `ADD_ROLE Operator <pk_hex64> <cert_hex128> iPad-01`
     /// The optional device label lets several devices hold the same role and shows
     /// up in `LIST_ROLES` as `name@device`. Metadata, not part of the certificate —
     /// the supervisor-signed command authenticates it.
@@ -32,7 +32,7 @@ public enum Command {
         return cmd
     }
 
-    /// e.g. `REVOKE_ROLE Bernis-iPad` or `REVOKE_ROLE Operator` — the firmware
+    /// e.g. `REVOKE_ROLE iPad-01` or `REVOKE_ROLE Operator` — the firmware
     /// matches a device label first (revokes that one entry), then falls back to a
     /// role name (revokes all entries holding it).
     public static func revokeRole(name: String) -> String {

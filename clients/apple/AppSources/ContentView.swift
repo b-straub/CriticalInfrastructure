@@ -276,7 +276,7 @@ private struct SupervisorPanel: View {
                         .font(.callout.monospaced())
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
-                    TextField("Device label, e.g. Bernis-iPad (optional)", text: $externalDevice)
+                    TextField("Device label, e.g. iPad-01 (optional)", text: $externalDevice)
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                     if let hw = model.hardwareKeyPubHex {

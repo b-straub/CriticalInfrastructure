@@ -105,7 +105,7 @@ caller's role is decided by *which* Ed25519 pubkey verifies the signature, never
 by any field the client asserts.
 
 **Per-device enrollment.** The optional `device` label (`[A-Za-z0-9._-]{1,16}`,
-e.g. `Bernis-iPad`) lets several devices hold the *same* role with their own
+e.g. `iPad-01`) lets several devices hold the *same* role with their own
 keys: entries are keyed by pubkey/label (not role name), `LIST_ROLES` prints
 `name@device:pk`, and `REVOKE_ROLE` matches a device label first (that one
 entry), then a role name (all entries holding it). The label is metadata outside

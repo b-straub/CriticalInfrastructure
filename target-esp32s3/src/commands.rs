@@ -58,7 +58,7 @@ pub fn dispatch(
                 valid_parse = false;
             }
 
-            // Optional 4th arg: device label ("Bernis-iPad") so the same role can be
+            // Optional 4th arg: device label ("iPad-01") so the same role can be
             // granted to several devices and LIST/REVOKE can tell them apart. Charset
             // is restricted (no whitespace/';') so it survives the envelope framing.
             let device = cmd_parts.next().unwrap_or("");

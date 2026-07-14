@@ -14,7 +14,7 @@ pub struct RoleEntry {
     /// Client public key: 33 bytes (P-256 compressed). A `Vec` for wire flexibility.
     pub pubkey: heapless::Vec<u8, 33>,
     pub cert_sig: heapless::Vec<u8, 64>,
-    /// Device label (e.g. "Bernis-iPad") — differentiates same-role entries from
+    /// Device label (e.g. "iPad-01") — differentiates same-role entries from
     /// different devices in LIST_ROLES and is the primary REVOKE_ROLE target.
     /// Metadata only: NOT part of the supervisor certificate (the supervisor-signed
     /// ADD_ROLE command authenticates it). Empty on legacy/unlabeled entries.
