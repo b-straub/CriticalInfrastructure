@@ -191,6 +191,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CriticalInfra;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphone*]" = CriticalInfra.entitlements;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to the CriticalInfra device over Bluetooth LE.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Reach the CriticalInfra device over the local Wi-Fi network (UDP).";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -221,6 +222,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CriticalInfra;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphone*]" = CriticalInfra.entitlements;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Connect to the CriticalInfra device over Bluetooth LE.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Reach the CriticalInfra device over the local Wi-Fi network (UDP).";
 				LD_RUNPATH_SEARCH_PATHS = (
