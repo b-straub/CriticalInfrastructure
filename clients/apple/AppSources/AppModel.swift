@@ -1,6 +1,11 @@
 import CriticalInfraKit
 import Observation
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// App state built around **identities**: one Secure Enclave key per role
 /// (Supervisor / Admin / Operator / Observer), keyed by the role name. You pick
@@ -261,5 +266,40 @@ final class AppModel {
     func saveConfig() {
         config.save()
         showConfig = config.needsSetup
+    }
+
+    /// Import a device descriptor JSON (from `provision/show-device-keys.sh`) into
+    /// the current config — keys, and host/name if present. Returns a status
+    /// message. Public-key data only; nothing secret is imported.
+    @discardableResult
+    func importConfig(json: Data) -> Bool {
+        do {
+            try config.apply(importJSON: json)
+            config.save()
+            showConfig = config.needsSetup
+            lastResponse = "Imported device keys\(config.host.isEmpty ? "" : " + host \(config.host)")."
+            return true
+        } catch {
+            lastResponse = "Import failed: \(error)"
+            return false
+        }
+    }
+
+    /// Import from the system clipboard (the script copies the JSON there;
+    /// Universal Clipboard carries it from a nearby Mac to iPhone/iPad).
+    @discardableResult
+    func importConfigFromClipboard() -> Bool {
+        #if canImport(AppKit)
+        let text = NSPasteboard.general.string(forType: .string)
+        #elseif canImport(UIKit)
+        let text = UIPasteboard.general.string
+        #else
+        let text: String? = nil
+        #endif
+        guard let text, let data = text.data(using: .utf8) else {
+            lastResponse = "Clipboard is empty — run provision/show-device-keys.sh first."
+            return false
+        }
+        return importConfig(json: data)
     }
 }

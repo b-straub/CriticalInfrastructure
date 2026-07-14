@@ -95,7 +95,7 @@ private struct ConfigForm: View {
 
     var body: some View {
         Form {
-            Section("Device") {
+            Section {
                 Picker("Transport", selection: $model.config.transport) {
                     Text("Wi-Fi (UDP)").tag(TransportKind.udp)
                     Text("Bluetooth (BLE)").tag(TransportKind.ble)
@@ -117,6 +117,15 @@ private struct ConfigForm: View {
                     .font(.body.monospaced())
                     .autocorrectionDisabled()
                     .platformFieldKeyboard(.ascii)
+                Button {
+                    model.importConfigFromClipboard()
+                } label: {
+                    Label("Import config from clipboard", systemImage: "doc.on.clipboard")
+                }
+            } header: {
+                Text("Device")
+            } footer: {
+                Text("Run provision/show-device-keys.sh — it copies the device's public keys (and IP) as JSON. Universal Clipboard carries it from your Mac to a nearby iPhone/iPad.")
             }
 
             Section {

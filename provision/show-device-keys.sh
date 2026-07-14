@@ -53,22 +53,54 @@ except Exception:
             return ""
 
 buf, deadline = "", time.time() + 20
-sig = x25 = None
+sig = x25 = ip = None
 while time.time() < deadline and not (sig and x25):
     buf += reader()
     m = re.search(r"Response-Signing PubKey:\s*([0-9a-fA-F]{64})", buf)
     if m: sig = m.group(1)
     m = re.search(r"X25519 PubKey:\s*([0-9a-fA-F]{64})", buf)
     if m: x25 = m.group(1)
+    m = re.search(r"Got IP:\s*([0-9.]+)", buf)   # only present in UDP mode
+    if m: ip = m.group(1)
 
 if not (sig and x25):
     print("\nCould not read both keys. Is the board on this port and booting? "
           "Try pressing RESET, or use the UART port (not native USB-JTAG).")
     sys.exit(1)
 
+import json, subprocess
+# All public: X25519 pub (encrypt-to-device) + Ed25519 pub (verify replies). No
+# secrets — the eFuse-held private halves never leave the chip — so this JSON is
+# safe to share / AirDrop. `criticalinfra` version tag lets the app recognize it.
+payload = {"criticalinfra": 1,
+           "espX25519PubHex": x25,
+           "espSigPubHex": sig}
+if ip:
+    payload["host"] = ip
+blob = json.dumps(payload)
+
 print()
 print("  App field 'X25519 (ROM) key':  " + x25)
 print("  App field 'Ed25519 sig key':   " + sig)
+if ip:
+    print("  Device IP (UDP host):          " + ip)
 print()
-print("Paste these two into the app's Settings › Device.")
+print("JSON (public keys — safe to share):")
+print("  " + blob)
+
+# Copy to the clipboard so the app's Settings > Import config can read it (macOS;
+# Universal Clipboard carries it to a nearby iPhone/iPad on the same Apple ID).
+try:
+    subprocess.run(["pbcopy"], input=blob.encode(), check=True)
+    print("\nCopied to the clipboard — in the app: Settings > Import config.")
+except Exception:
+    pass
+
+# Also drop a file you can AirDrop to an iPhone/iPad and open in the app.
+try:
+    with open("device-config.json", "w") as f:
+        f.write(blob + "\n")
+    print("Wrote device-config.json (AirDrop it to a phone, or open in the app).")
+except Exception:
+    pass
 PY
