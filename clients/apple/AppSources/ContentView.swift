@@ -225,6 +225,7 @@ private struct SupervisorPanel: View {
     @Bindable var model: AppModel
     @State private var externalPubkey = ""
     @State private var externalRole: Role = .admin
+    @State private var externalDevice = ""
 
     var body: some View {
         CenteredColumn {
@@ -275,6 +276,9 @@ private struct SupervisorPanel: View {
                         .font(.callout.monospaced())
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
+                    TextField("Device label, e.g. Bernis-iPad (optional)", text: $externalDevice)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
                     if let hw = model.hardwareKeyPubHex {
                         Button { externalPubkey = hw } label: {
                             Label("Use inserted hardware key", systemImage: "key.card")
@@ -290,7 +294,9 @@ private struct SupervisorPanel: View {
                         .fixedSize()
                         Spacer()
                         Button("Provision") {
-                            model.provisionExternal(pubkeyHex: externalPubkey, as: externalRole)
+                            model.provisionExternal(
+                                pubkeyHex: externalPubkey, as: externalRole,
+                                device: externalDevice)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(externalPubkey.count != 66)

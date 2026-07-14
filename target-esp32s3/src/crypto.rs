@@ -17,7 +17,7 @@ pub fn build_signed_response(
     esp_signing_key: &SigningKey,
     client_ephemeral_pub: &[u8; 32],
     rng: &mut Rng,
-) -> heapless::String<2560> {
+) -> heapless::String<4288> {
     use core::fmt::Write as _;
     #[allow(deprecated)]
     use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -25,7 +25,7 @@ pub fn build_signed_response(
     use aes_gcm::aead::{AeadInPlace, KeyInit};
     use sha2::Digest as _;
 
-    let mut final_response = heapless::String::<2560>::new();
+    let mut final_response = heapless::String::<4288>::new();
 
     // Sign "resp|<ts>|<message>": binds the response to this request and proves
     // it originated from this device's signing key.
@@ -38,7 +38,7 @@ pub fn build_signed_response(
     }
 
     // Inner plaintext that gets AES-GCM encrypted below: ts;message;sig
-    let mut plaintext = heapless::String::<768>::new();
+    let mut plaintext = heapless::String::<1280>::new();
     let _ = write!(&mut plaintext, "{};{};{}", resp_ts, message, resp_sig_hex);
 
     // Fresh ephemeral X25519 keypair from the hardware TRNG. Deriving it from a
@@ -65,7 +65,7 @@ pub fn build_signed_response(
     #[allow(deprecated)]
     let nonce = Nonce::from_slice(&iv);
 
-    let mut ciphertext = heapless::Vec::<u8, 1024>::new();
+    let mut ciphertext = heapless::Vec::<u8, 2048>::new();
     let _ = ciphertext.extend_from_slice(plaintext.as_bytes());
 
     #[allow(deprecated)]
@@ -77,7 +77,7 @@ pub fn build_signed_response(
             let _ = write!(&mut iv_hex_out, "{:02x}", b);
         }
 
-        let mut cipher_hex_out = heapless::String::<2048>::new();
+        let mut cipher_hex_out = heapless::String::<4096>::new();
         for b in ciphertext.as_slice() {
             let _ = write!(&mut cipher_hex_out, "{:02x}", b);
         }

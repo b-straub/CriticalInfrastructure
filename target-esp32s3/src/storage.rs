@@ -54,13 +54,37 @@ fn write_page(off: u32, page: &Page) -> bool {
     critical_section::with(|_| unsafe { write_inner(STORAGE_BASE + off, page.0.as_ptr() as *const u32) })
 }
 
+/// Pre-device-label `RoleEntry` layout, kept only to migrate persisted role sets
+/// written before the `device` field existed.
+#[derive(serde::Deserialize)]
+struct LegacyRoleEntry {
+    name: heapless::String<16>,
+    pubkey: heapless::Vec<u8, 33>,
+    cert_sig: heapless::Vec<u8, 64>,
+}
+
 /// Load the persisted, supervisor-signed roles (postcard-encoded).
 pub fn load_roles() -> Option<heapless::Vec<RoleEntry, 10>> {
     let mut page = Page([0u8; SECTOR]);
     if !read_page(ROLES_OFF, &mut page) {
         return None;
     }
-    postcard::from_bytes::<heapless::Vec<RoleEntry, 10>>(&page.0).ok()
+    if let Ok(roles) = postcard::from_bytes::<heapless::Vec<RoleEntry, 10>>(&page.0) {
+        return Some(roles);
+    }
+    // Legacy format (no device label): migrate with empty labels; the next
+    // save_roles persists the new layout.
+    let legacy = postcard::from_bytes::<heapless::Vec<LegacyRoleEntry, 10>>(&page.0).ok()?;
+    let mut roles = heapless::Vec::new();
+    for e in legacy {
+        let _ = roles.push(RoleEntry {
+            name: e.name,
+            pubkey: e.pubkey,
+            cert_sig: e.cert_sig,
+            device: heapless::String::new(),
+        });
+    }
+    Some(roles)
 }
 
 /// Persist the current role set.

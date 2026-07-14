@@ -21,7 +21,7 @@ pub fn dispatch(
     cmd: &str,
     role: &str,
     is_supervisor: bool,
-    dynamic_msg: &mut heapless::String<512>,
+    dynamic_msg: &mut heapless::String<1024>,
 ) -> Outcome {
     use core::fmt::Write as _;
 
@@ -58,26 +58,35 @@ pub fn dispatch(
                 valid_parse = false;
             }
 
-            if valid_parse {
+            // Optional 4th arg: device label ("Bernis-iPad") so the same role can be
+            // granted to several devices and LIST/REVOKE can tell them apart. Charset
+            // is restricted (no whitespace/';') so it survives the envelope framing.
+            let device = cmd_parts.next().unwrap_or("");
+            let device_ok = device.len() <= 16
+                && device
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+
+            if valid_parse && device_ok {
                 let mut name_str = heapless::String::<16>::new();
                 let _ = name_str.push_str(new_role);
+                let mut device_str = heapless::String::<16>::new();
+                let _ = device_str.push_str(device);
                 let entry = RoleEntry {
                     name: name_str,
                     pubkey: new_pk,
                     cert_sig: new_cert,
+                    device: device_str,
                 };
-                // replace if exists
-                let mut replaced = false;
-                for e in unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.iter_mut() {
-                    if e.name == entry.name {
-                        *e = entry.clone();
-                        replaced = true;
-                        break;
-                    }
-                }
-                if !replaced {
-                    let _ = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.push(entry);
-                }
+                // Entry identity = pubkey OR device label (both stay unique): re-granting
+                // a key replaces its entry, re-using a label replaces that device's entry.
+                // Different devices with the same role coexist as separate entries.
+                let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
+                roles.retain(|e| {
+                    e.pubkey != entry.pubkey
+                        && (entry.device.is_empty() || e.device != entry.device)
+                });
+                let _ = roles.push(entry);
 
                 storage::save_roles(unsafe { &*core::ptr::addr_of!(ROLES) });
                 info!("Saved roles to flash");
@@ -97,21 +106,30 @@ pub fn dispatch(
             // transport field.
             let mut cmd_parts = cmd.split_whitespace();
             cmd_parts.next(); // skip REVOKE_ROLE
-            if let Some(target_role) = cmd_parts.next() {
-                let mut idx_to_remove = None;
-                let mut r_iter = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.iter().enumerate();
-                while let Some((i, r)) = r_iter.next() {
-                    if r.name == target_role {
-                        idx_to_remove = Some(i);
-                        break;
+            if let Some(target) = cmd_parts.next() {
+                // The target is a device label first (revokes exactly that device's
+                // entry), else a role name (revokes ALL entries holding that role —
+                // deterministic when several devices share it).
+                let roles = unsafe { &mut *core::ptr::addr_of_mut!(ROLES) };
+                let before = roles.len();
+                if roles.iter().any(|r| !r.device.is_empty() && r.device == target) {
+                    roles.retain(|r| r.device != target);
+                    let _ = write!(dynamic_msg, "Device {} revoked", target);
+                } else {
+                    roles.retain(|r| r.name != target);
+                    if roles.len() < before {
+                        let _ = write!(
+                            dynamic_msg,
+                            "Role {} revoked ({} entries)",
+                            target,
+                            before - roles.len()
+                        );
+                    } else {
+                        let _ = write!(dynamic_msg, "Role {} not found", target);
                     }
                 }
-                if let Some(idx) = idx_to_remove {
-                    unsafe { &mut *core::ptr::addr_of_mut!(ROLES) }.swap_remove(idx);
+                if roles.len() < before {
                     storage::save_roles(unsafe { &*core::ptr::addr_of!(ROLES) });
-                    let _ = write!(dynamic_msg, "Role {} revoked", target_role);
-                } else {
-                    let _ = write!(dynamic_msg, "Role {} not found", target_role);
                 }
                 allowed = true;
                 color_name = "System";
@@ -129,7 +147,12 @@ pub fn dispatch(
                     for b in &r.pubkey {
                         let _ = write!(&mut pk_hex, "{:02x}", b);
                     }
-                    let _ = write!(dynamic_msg, "{}:{},", r.name, pk_hex);
+                    // `name@device:pk` when labeled; legacy entries keep `name:pk`.
+                    if r.device.is_empty() {
+                        let _ = write!(dynamic_msg, "{}:{},", r.name, pk_hex);
+                    } else {
+                        let _ = write!(dynamic_msg, "{}@{}:{},", r.name, r.device, pk_hex);
+                    }
                 }
             }
             allowed = true;

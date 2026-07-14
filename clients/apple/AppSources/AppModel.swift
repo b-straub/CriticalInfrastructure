@@ -134,7 +134,8 @@ final class AppModel {
                 let cmd = try Provisioning.addRoleCommand(
                     role: role.rawValue,
                     newPublicKeyHex: roleKey.publicKeyHex,
-                    supervisor: supervisor
+                    supervisor: supervisor,
+                    device: Command.deviceLabel() // this device's enclave key -> label it
                 )
                 let client = DeviceClient(config: cfg, signer: supervisor)
                 lastResponse = await client.send(cmd)
@@ -168,9 +169,10 @@ final class AppModel {
     }
 
     /// Supervisor provisions an EXTERNAL public key (a hardware key, or another
-    /// Mac's enclave key) as a role — no local key is created here, so the private
-    /// key stays where it lives (the card / the other Mac).
-    func provisionExternal(pubkeyHex: String, as role: Role) {
+    /// device's enclave key) as a role — no local key is created here, so the
+    /// private key stays where it lives (the card / the other device). `device`
+    /// optionally labels whose key this is for LIST_ROLES / targeted revocation.
+    func provisionExternal(pubkeyHex: String, as role: Role, device: String = "") {
         guard let supervisor = signer, activeRole == .supervisor else {
             lastResponse = "Select the Supervisor identity first."
             return
@@ -185,8 +187,10 @@ final class AppModel {
             busy = true
             defer { busy = false }
             do {
+                let sanitized = device.trimmingCharacters(in: .whitespacesAndNewlines)
                 let cmd = try Provisioning.addRoleCommand(
-                    role: role.rawValue, newPublicKeyHex: pk, supervisor: supervisor)
+                    role: role.rawValue, newPublicKeyHex: pk, supervisor: supervisor,
+                    device: sanitized.isEmpty ? nil : sanitized)
                 let client = DeviceClient(config: cfg, signer: supervisor)
                 lastResponse = await client.send(cmd)
             } catch {

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Command strings — the wire SSOT, mirroring `shared::terminology` in the Rust
 /// workspace. The parameterized commands keep the exact trailing-space / spacing
@@ -17,15 +20,37 @@ public enum Command {
         "SET_THRESHOLD \(String(format: "%.1f", celsius))"
     }
 
-    /// e.g. `ADD_ROLE Operator <pk_hex64> <cert_hex128>`
-    public static func addRole(name: String, pubkeyHex: String, certSigHex: String) -> String {
-        "ADD_ROLE \(name) \(pubkeyHex) \(certSigHex)"
+    /// e.g. `ADD_ROLE Operator <pk_hex64> <cert_hex128> Bernis-iPad`
+    /// The optional device label lets several devices hold the same role and shows
+    /// up in `LIST_ROLES` as `name@device`. Metadata, not part of the certificate —
+    /// the supervisor-signed command authenticates it.
+    public static func addRole(
+        name: String, pubkeyHex: String, certSigHex: String, device: String? = nil
+    ) -> String {
+        var cmd = "ADD_ROLE \(name) \(pubkeyHex) \(certSigHex)"
+        if let device, !device.isEmpty { cmd += " \(device)" }
+        return cmd
     }
 
-    /// e.g. `REVOKE_ROLE Operator` (the target is parsed from the decrypted
-    /// command by the firmware — see the REVOKE_ROLE fix in commands.rs).
+    /// e.g. `REVOKE_ROLE Bernis-iPad` or `REVOKE_ROLE Operator` — the firmware
+    /// matches a device label first (revokes that one entry), then falls back to a
+    /// role name (revokes all entries holding it).
     public static func revokeRole(name: String) -> String {
         "REVOKE_ROLE \(name)"
+    }
+
+    /// Sanitized local device name for role labels: firmware charset
+    /// `[A-Za-z0-9._-]`, max 16 chars (spaces/umlauts become `-`).
+    public static func deviceLabel() -> String {
+        #if os(macOS)
+        let raw = Host.current().localizedName ?? "Mac"
+        #else
+        let raw = UIDevice.current.name
+        #endif
+        let cleaned = raw.map { c -> Character in
+            (c.isASCII && (c.isLetter || c.isNumber)) || c == "." || c == "_" || c == "-" ? c : "-"
+        }
+        return String(String(cleaned).prefix(16))
     }
 }
 
