@@ -237,7 +237,7 @@ private struct IdentityPicker: View {
             CenteredColumn(maxWidth: 460) {
                 VStack(spacing: 4) {
                     Text("Choose an identity").font(.title2.bold())
-                    Text("A Secure Enclave key, or an inserted hardware key.")
+                    Text("Keys stored on THIS device. The device only accepts them if a supervisor registered them (roles) or baked them in (SUPERVISOR_PUBKEY). Long-press to forget a stale one.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .multilineTextAlignment(.center)
@@ -245,7 +245,8 @@ private struct IdentityPicker: View {
 
                 VStack(spacing: 10) {
                     ForEach(model.availableRoles, id: \.self) { role in
-                        IdentityCard(role: role, deviceLabel: model.resolvedDeviceLabel) {
+                        IdentityCard(role: role, deviceLabel: model.resolvedDeviceLabel,
+                                     onForget: { model.forgetIdentity(role) }) {
                             model.select(role)
                         }
                     }
@@ -502,8 +503,10 @@ func copyToPasteboard(_ s: String) {
 private struct IdentityCard: View {
     let role: Role
     var deviceLabel: String = ""
+    var onForget: (() -> Void)? = nil
     let action: () -> Void
     @State private var hover = false
+    @State private var confirmForget = false
 
     var body: some View {
         Button(action: action) {
@@ -542,6 +545,21 @@ private struct IdentityCard: View {
         .buttonStyle(.plain)
         .onHover { hover = $0 }
         .animation(.easeOut(duration: 0.12), value: hover)
+        .contextMenu {
+            if onForget != nil {
+                Button(role: .destructive) { confirmForget = true } label: {
+                    Label("Forget this identity", systemImage: "trash")
+                }
+            }
+        }
+        .confirmationDialog(
+            "Forget the “\(role.rawValue)” key on this device?",
+            isPresented: $confirmForget, titleVisibility: .visible
+        ) {
+            Button("Forget", role: .destructive) { onForget?() }
+        } message: {
+            Text("Deletes only this device's local key. It does NOT revoke the role on the device — a supervisor must do that separately.")
+        }
     }
 }
 

@@ -106,6 +106,16 @@ final class AppModel {
         hardwareCertName = PIVSigner.tokenKeyName()
     }
 
+    /// Delete a local Secure Enclave identity (a stale/unwanted key on THIS device). Only
+    /// removes the local key — it does NOT touch the device's roles (a supervisor must REVOKE
+    /// a role on the device separately). If it's the active identity, switch away.
+    func forgetIdentity(_ role: Role) {
+        EnclaveSigner.reset(id: role.rawValue)
+        if activeRole == role { switchIdentity() }
+        availableRoles = Self.loadAvailableRoles()
+        lastResponse = "Forgot the local “\(role.rawValue)” key on this device."
+    }
+
     /// Re-scan for an inserted hardware key.
     func refreshHardware() {
         hardwareKeyPubHex = PIVSigner.detect()
