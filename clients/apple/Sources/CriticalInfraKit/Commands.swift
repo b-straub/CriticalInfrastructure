@@ -47,6 +47,36 @@ public enum Command {
         return String(String(cleaned).prefix(16))
     }
 
+    /// A role as the DEVICE reports it in LIST_ROLES: a role name + its key label.
+    public struct DeviceRole: Equatable, Sendable {
+        public let name: String
+        public let label: String   // "" for legacy unlabeled entries
+        public init(name: String, label: String) { self.name = name; self.label = label }
+    }
+
+    /// Parse a LIST_ROLES device response into the roles actually stored on the device.
+    /// `"No roles found"` → `[]`; `"ROLES:Admin@Mac:03..,Observer@Mac:02.."` → the pairs.
+    /// Returns nil when the string isn't a roles response (so callers don't clobber state on
+    /// an error/unrelated reply). One role can appear multiple times with different labels.
+    public static func parseRolesResponse(_ response: String) -> [DeviceRole]? {
+        let t = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t == "No roles found" { return [] }
+        guard t.hasPrefix("ROLES:") else { return nil }
+        let body = t.dropFirst("ROLES:".count)
+        var out: [DeviceRole] = []
+        for entry in body.split(separator: ",") where !entry.isEmpty {
+            // entry = "name@label:pk" or (legacy) "name:pk" — the pk follows the first ':'.
+            let head = entry.split(separator: ":", maxSplits: 1).first.map(String.init) ?? String(entry)
+            if let at = head.firstIndex(of: "@") {
+                out.append(DeviceRole(name: String(head[..<at]),
+                                      label: String(head[head.index(after: at)...])))
+            } else {
+                out.append(DeviceRole(name: head, label: ""))
+            }
+        }
+        return out
+    }
+
     /// Sanitized local device name — the key label for keys living in THIS
     /// device's Secure Enclave.
     public static func localDeviceLabel() -> String {

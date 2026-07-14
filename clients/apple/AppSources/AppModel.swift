@@ -19,6 +19,9 @@ final class AppModel {
     /// The identity currently acting as (nil → the picker is shown).
     var activeRole: Role?
     var lastResponse: String?
+    /// Inline status for the Settings "Import config" action (kept out of lastResponse so it
+    /// shows next to the button and doesn't close Settings).
+    var importStatus: String?
     var busy = false
     var showConfig: Bool
     /// True while the provisioning & security showcase panel is shown (macOS).
@@ -177,8 +180,14 @@ final class AppModel {
                     label: resolvedDeviceLabel // enclave key lives here -> this device's name
                 )
                 let client = DeviceClient(config: cfg, signer: supervisor)
-                lastResponse = await client.send(cmd)
+                let resp = await client.send(cmd)
+                lastResponse = resp
                 availableRoles = Self.loadAvailableRoles()
+                // Optimistically reflect the grant in the device-roles view (if we've fetched it).
+                if resp.contains("Added Securely"), deviceRoles != nil {
+                    deviceRoles?.removeAll { $0.name == role.rawValue && $0.label == resolvedDeviceLabel }
+                    deviceRoles?.append(Command.DeviceRole(name: role.rawValue, label: resolvedDeviceLabel))
+                }
             } catch {
                 // Don't leave a half-created local key if provisioning failed.
                 EnclaveSigner.reset(id: role.rawValue)
@@ -199,12 +208,41 @@ final class AppModel {
             EnclaveSigner.reset(id: role.rawValue) // drop the local key too
             availableRoles = Self.loadAvailableRoles()
             lastResponse = resp
+            // Revoke by role name removes every entry with that role on the device.
+            if resp.contains("revoked"), deviceRoles != nil {
+                deviceRoles?.removeAll { $0.name == role.rawValue }
+            }
         }
+    }
+
+    /// Roles the DEVICE actually reports (from the last LIST_ROLES) — nil until refreshed.
+    /// The role rows show THIS (device truth), not just which enclave keys exist locally.
+    var deviceRoles: [Command.DeviceRole]? = nil
+
+    /// True (device has it) / false (doesn't) / nil (not yet refreshed from the device).
+    func deviceHasRole(_ role: Role) -> Bool? {
+        guard let dr = deviceRoles else { return nil }
+        return dr.contains { $0.name == role.rawValue }
+    }
+
+    /// Key labels the device holds for `role` (e.g. ["Mac", "iPad-01"]); empty if none/unknown.
+    func deviceLabels(for role: Role) -> [String] {
+        (deviceRoles ?? [])
+            .filter { $0.name == role.rawValue }
+            .map { $0.label.isEmpty ? "unlabeled" : $0.label }
     }
 
     func listRoles() {
         guard let supervisor = signer, activeRole == .supervisor else { return }
-        sendAs(supervisor, Command.listRoles)
+        let cfg = config
+        Task {
+            busy = true
+            defer { busy = false }
+            let client = DeviceClient(config: cfg, signer: supervisor)
+            let resp = await client.send(Command.listRoles)
+            lastResponse = resp
+            if let roles = Command.parseRolesResponse(resp) { deviceRoles = roles }
+        }
     }
 
     /// Supervisor provisions an EXTERNAL public key (a hardware key, or another
@@ -276,11 +314,12 @@ final class AppModel {
         do {
             try config.apply(importJSON: json)
             config.save()
-            showConfig = config.needsSetup
-            lastResponse = "Imported device keys\(config.host.isEmpty ? "" : " + host \(config.host)")."
+            // Keep Settings OPEN after import — the user reviews the filled fields and closes
+            // manually. importStatus drives an inline confirmation next to the button.
+            importStatus = "Imported device keys\(config.host.isEmpty ? "" : " + host \(config.host)")."
             return true
         } catch {
-            lastResponse = "Import failed: \(error)"
+            importStatus = "Import failed: \(error)"
             return false
         }
     }
@@ -297,7 +336,7 @@ final class AppModel {
         let text: String? = nil
         #endif
         guard let text, let data = text.data(using: .utf8) else {
-            lastResponse = "Clipboard is empty — run provision/show-device-keys.sh first."
+            importStatus = "Clipboard is empty — run provision/show-device-keys.sh first."
             return false
         }
         return importConfig(json: data)

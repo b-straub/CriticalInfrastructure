@@ -41,17 +41,28 @@ try:
     ser.rts = True; time.sleep(0.12); ser.rts = False
     reader = lambda: ser.read(4096).decode("utf-8", "replace")
 except Exception:
-    # No pyserial (or a JTAG port that ignores RTS): fall back to a raw read and
-    # ask the user to press RESET themselves.
-    import termios, os
-    print("   (pyserial not installed — press the RESET button on the board now;")
-    print("    `pip3 install pyserial` enables an automatic reset next time)")
+    # No pyserial: open the port raw and pulse the reset line ourselves via ioctl
+    # (stdlib only). macOS BSD ioctl codes — this is Mac-only tooling. If the pulse
+    # doesn't take (e.g. a port with no auto-reset circuit), a manual RESET still works.
+    import termios, os, fcntl, struct
     fd = os.open(PORT, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
     a = termios.tcgetattr(fd)
     a[0] = 0; a[1] = 0; a[2] = termios.CREAD | termios.CLOCAL | termios.CS8; a[3] = 0
     a[4] = termios.B115200; a[5] = termios.B115200
     a[6][termios.VMIN] = 0; a[6][termios.VTIME] = 5  # 0.5s read timeout -> deadline is honored
     termios.tcsetattr(fd, termios.TCSANOW, a)
+    try:
+        TIOCM_DTR = getattr(termios, "TIOCM_DTR", 0x002)
+        TIOCM_RTS = getattr(termios, "TIOCM_RTS", 0x004)
+        TIOCMBIS  = getattr(termios, "TIOCMBIS", 0x8004746c)  # set modem bits (macOS)
+        TIOCMBIC  = getattr(termios, "TIOCMBIC", 0x8004746b)  # clear modem bits (macOS)
+        def line(bits, on):
+            fcntl.ioctl(fd, TIOCMBIS if on else TIOCMBIC, struct.pack("I", bits))
+        line(TIOCM_DTR, False)                                  # GPIO0 high -> normal boot
+        line(TIOCM_RTS, True); time.sleep(0.12); line(TIOCM_RTS, False)  # pulse EN -> reset
+    except Exception:
+        print("   (couldn't auto-reset — press the RESET button on the board now;")
+        print("    `pip3 install pyserial` gives a cleaner auto-reset)")
     def reader():
         try:
             return os.read(fd, 4096).decode("utf-8", "replace")

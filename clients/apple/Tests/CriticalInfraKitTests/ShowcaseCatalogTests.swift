@@ -132,6 +132,21 @@ final class ShowcaseCatalogTests: XCTestCase {
 
     // MARK: verdict mapping
 
+    func testParseRolesResponse() {
+        XCTAssertEqual(Command.parseRolesResponse("No roles found"), [])
+        XCTAssertNil(Command.parseRolesResponse("Signature verification failed or Unknown Role"))
+        XCTAssertEqual(
+            Command.parseRolesResponse("ROLES:Admin@Mac:03abc,Observer@iPad-01:02def,"),
+            [Command.DeviceRole(name: "Admin", label: "Mac"),
+             Command.DeviceRole(name: "Observer", label: "iPad-01")]
+        )
+        // legacy unlabeled entry
+        XCTAssertEqual(
+            Command.parseRolesResponse("ROLES:Admin:03abc,"),
+            [Command.DeviceRole(name: "Admin", label: "")]
+        )
+    }
+
     func testGenericVerdict() {
         XCTAssertEqual(ShowcaseStep.exitZeroPass(0), .pass)
         XCTAssertEqual(ShowcaseStep.exitZeroPass(1), .fail)

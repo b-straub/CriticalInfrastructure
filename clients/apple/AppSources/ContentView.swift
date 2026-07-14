@@ -122,10 +122,21 @@ private struct ConfigForm: View {
                 } label: {
                     Label("Import config from clipboard", systemImage: "doc.on.clipboard")
                 }
+                if let status = model.importStatus {
+                    Label(status, systemImage: status.hasPrefix("Imported") ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(status.hasPrefix("Imported") ? Color.green : .orange)
+                }
+                Button {
+                    copyToPasteboard("provision/show-device-keys.sh")
+                } label: {
+                    Label("Copy the read-keys command", systemImage: "terminal")
+                }
+                .font(.caption)
             } header: {
                 Text("Device")
             } footer: {
-                Text("Don't have the device's keys? On the Mac run  provision/show-device-keys.sh  — it reads the Ed25519 + X25519 public keys off the board and copies them here as JSON. Universal Clipboard carries them to a nearby iPhone/iPad; then tap Import config.")
+                Text("Don't have the device's keys? On the Mac run  provision/show-device-keys.sh  (button above copies it) — it reads the Ed25519 + X25519 public keys off the board and copies them here as JSON. Universal Clipboard carries them to a nearby iPhone/iPad; then tap Import config.")
             }
 
             Section {
@@ -300,7 +311,9 @@ private struct SupervisorPanel: View {
                         if index > 0 { Divider() }
                         RoleManageRow(
                             role: role,
-                            isRegistered: model.availableRoles.contains(role),
+                            onDevice: model.deviceHasRole(role),
+                            labels: model.deviceLabels(for: role),
+                            hasLocalKey: model.availableRoles.contains(role),
                             onRegister: { model.registerRole(role) },
                             onRevoke: { model.revokeRole(role) }
                         )
@@ -476,6 +489,16 @@ extension View {
 /// Cross-platform keyboard hint (maps to `UIKeyboardType` on iOS, ignored on macOS).
 enum FieldKeyboard { case ascii, numeric }
 
+/// Put `s` on the system clipboard (macOS/iOS).
+func copyToPasteboard(_ s: String) {
+    #if canImport(AppKit)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(s, forType: .string)
+    #elseif canImport(UIKit)
+    UIPasteboard.general.string = s
+    #endif
+}
+
 private struct IdentityCard: View {
     let role: Role
     var deviceLabel: String = ""
@@ -522,26 +545,40 @@ private struct IdentityCard: View {
     }
 }
 
-/// One row in the Supervisor's Roles list: shows the role's state with an inline
-/// Register (if absent) or Revoke (if present) action — CRUD lives on the row.
+/// One row in the Supervisor's Roles list. Reflects the DEVICE's truth from the last
+/// LIST_ROLES (`onDevice`) — not merely which enclave keys exist locally — so it stays
+/// consistent with the device's Response. `onDevice == nil` means "not refreshed yet".
 private struct RoleManageRow: View {
     let role: Role
-    let isRegistered: Bool
+    let onDevice: Bool?          // nil = unknown (tap Refresh); else device truth
+    let labels: [String]         // device key labels for this role (e.g. ["Mac", "iPad-01"])
+    let hasLocalKey: Bool        // an enclave key for this role exists on this device
     let onRegister: () -> Void
     let onRevoke: () -> Void
+
+    /// The state we act on: device truth if known, else the local-key fallback.
+    private var registered: Bool { onDevice ?? hasLocalKey }
+
+    private var subtitle: String {
+        switch onDevice {
+        case .some(true):  return labels.isEmpty ? "On device" : "On device · " + labels.joined(separator: ", ")
+        case .some(false): return "Not on device"
+        case .none:        return hasLocalKey ? "Local key — tap Refresh to confirm" : "Not registered"
+        }
+    }
 
     var body: some View {
         HStack(spacing: 12) {
             RoleBadge(role: role, size: 34)
-                .opacity(isRegistered ? 1 : 0.35)
-                .grayscale(isRegistered ? 0 : 1)
+                .opacity(registered ? 1 : 0.35)
+                .grayscale(registered ? 0 : 1)
             VStack(alignment: .leading, spacing: 1) {
                 Text(role.rawValue).font(.body.weight(.medium))
-                Text(isRegistered ? "Registered" : "Not registered")
+                Text(subtitle)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if isRegistered {
+            if registered {
                 Button("Revoke", role: .destructive, action: onRevoke)
                     .buttonStyle(.bordered)
                     .controlSize(.small)
