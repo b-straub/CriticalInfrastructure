@@ -115,8 +115,19 @@ final class ShowcaseCatalogTests: XCTestCase {
         XCTAssertEqual(ids.count, Set(ids).count, "duplicate showcase step ids")
     }
 
-    func testFourAreas() {
-        XCTAssertEqual(ShowcaseCatalog.areas.map(\.id), ["keys", "device", "pentest", "ota"])
+    func testThreePhases() {
+        XCTAssertEqual(ShowcaseCatalog.areas.map(\.id), ["provision", "testing", "updates"])
+    }
+
+    /// Phase 1 (provisioning) must be strictly ordered: every irreversible burn is immediately
+    /// preceded by its rehearse, and the release seal is the very last step.
+    func testProvisioningOrderRehearseBeforeBurn() {
+        let ids = ShowcaseCatalog.provisioning.steps.map(\.id)
+        func idx(_ s: String) -> Int { ids.firstIndex(of: s)! }
+        XCTAssertLessThan(idx("device.harden.rehearse"), idx("device.harden.burn"))
+        XCTAssertLessThan(idx("device.seal.rehearse"), idx("device.seal"))
+        XCTAssertLessThan(idx("device.flash"), idx("device.seal"))          // Secure Boot before the seal
+        XCTAssertEqual(ids.last, "device.seal")                              // seal is the point of no return
     }
 
     // MARK: verdict mapping

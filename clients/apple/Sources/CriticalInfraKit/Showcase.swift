@@ -1,8 +1,8 @@
 import Foundation
 
-/// Declarative catalog for the in-app provisioning & security **showcase** — the four
-/// capability areas (key provisioning, device+eFuse provisioning, pen test, firmware updates)
-/// mapped to guided steps over the `provision/*.sh` pipeline.
+/// Declarative catalog for the in-app provisioning & security **showcase** — three ordered
+/// phases (1 provisioning → full seal, 2 testing, 3 OTA firmware updates) mapped to guided
+/// steps over the `provision/*.sh` pipeline.
 ///
 /// This file is deliberately UI-free and side-effect-free so `swift test` covers it: it only
 /// *describes* steps and *resolves* them to a concrete command line. Actually running a step
@@ -92,7 +92,7 @@ public struct ShowcaseStep: Identifiable, Sendable {
     }
 }
 
-/// One of the four showcase areas.
+/// One of the three showcase phases.
 public struct ShowcaseArea: Identifiable, Sendable {
     public let id: String
     public let title: String
@@ -152,18 +152,24 @@ public func resolveShowcaseStep(
     return ScriptInvocation(scriptPath: scriptPath, args: args, display: display)
 }
 
-/// The four areas, in showcase order. Inline steps are safe to run headless; terminal steps have
-/// an interactive gate; manual steps have no script.
+/// Three clearly-separated phases, in order:
+///   1. **Provisioning** — the one-way arc to a fully sealed board (do it ONCE, in order, on a
+///      fresh unit; each irreversible burn has a rehearse immediately before it).
+///   2. **Testing** — read-only network + cable checks that prove the lockdown. Safe anytime.
+///   3. **Updates** — OTA, the only way to change firmware after phase 1 is done.
+/// Inline steps are safe to run headless; terminal steps have an interactive gate; manual steps
+/// have no script.
 public enum ShowcaseCatalog {
-    public static let areas: [ShowcaseArea] = [keyProvisioning, deviceProvisioning, penTest, firmwareUpdates]
+    public static let areas: [ShowcaseArea] = [provisioning, testing, updates]
 
-    // MARK: 1. Key provisioning
-    static let keyProvisioning = ShowcaseArea(
-        id: "keys",
-        title: "Key provisioning",
-        icon: "key.card",
-        blurb: "Generate the signing keys on-card (keyroost), then enroll them for Secure Boot.",
+    // MARK: Phase 1 — Provisioning (one-way to full seal)
+    static let provisioning = ShowcaseArea(
+        id: "provision",
+        title: "1 · Provisioning",
+        icon: "lock.shield",
+        blurb: "The irreversible arc to a fully sealed board. Do it ONCE, top to bottom, on a FRESH unit — each burn has a rehearse just above it. When it ends, the cable is locked out and OTA (phase 3) is the only way in.",
         steps: [
+            // --- signing keys (no burns) ---
             ShowcaseStep(
                 id: "keys.keygen",
                 title: "Generate on-card PIV keys",
@@ -188,20 +194,11 @@ public enum ShowcaseCatalog {
                 args: [.literal("--name"), .literal("backupToken"), .literal("--driver"), .literal("PIV-II")],
                 mode: .inline
             ),
-        ]
-    )
-
-    // MARK: 2. Device + eFuse provisioning
-    static let deviceProvisioning = ShowcaseArea(
-        id: "device",
-        title: "Device + eFuse provisioning",
-        icon: "cpu",
-        blurb: "Root the identity in eFuse, enable Secure Boot, and seal flash encryption to Release.",
-        steps: [
+            // --- eFuse identity + JTAG (NOT secure download — that's the final seal) ---
             ShowcaseStep(
                 id: "device.harden.rehearse",
                 title: "eFuse harden — rehearse",
-                rationale: "Dry-run the HMAC identity + JTAG-off + secure-download burns on a virtual ESP32-S3. No board required, nothing burned.",
+                rationale: "Dry-run the HMAC identity + JTAG-off burns on a virtual ESP32-S3. No board required, nothing burned. (Secure Download Mode is NOT burned here — it must come after Secure Boot, so it's deferred to the final seal.)",
                 script: "2-efuse-harden.sh",
                 args: [.port],
                 mode: .inline
@@ -209,12 +206,13 @@ public enum ShowcaseCatalog {
             ShowcaseStep(
                 id: "device.harden.burn",
                 title: "eFuse harden — REAL burn",
-                rationale: "Burns the read-protected HMAC identity root, disables JTAG (DIS_PAD_JTAG, DIS_USB_JTAG), and enables secure download. Irreversible.",
+                rationale: "Burns the read-protected HMAC identity root and disables JTAG (DIS_PAD_JTAG, DIS_USB_JTAG). Does NOT enable Secure Download Mode (that would block the Secure Boot burn below). Irreversible.",
                 script: "2-efuse-harden.sh",
                 args: [.port, .literal("--yes-burn")],
                 mode: .terminal,
                 terminalHint: "espefuse will ask you to type BURN to confirm."
             ),
+            // --- Secure Boot ---
             ShowcaseStep(
                 id: "device.buildsign",
                 title: "Build + sign the chain",
@@ -226,47 +224,48 @@ public enum ShowcaseCatalog {
             ShowcaseStep(
                 id: "device.flash",
                 title: "Flash + enable Secure Boot",
-                rationale: "Flashes the signed chain and burns BOTH key digests (DIGEST0 + DIGEST1) + SECURE_BOOT_EN. From here only signed firmware boots, and either token can. Irreversible.",
+                rationale: "Flashes the signed chain and burns BOTH key digests (DIGEST0 + DIGEST1) + SECURE_BOOT_EN. From here only signed firmware boots, and either token can. Irreversible. (Must happen BEFORE the seal — it needs eFuse reads that Secure Download Mode would block.)",
                 script: "4-flash-enable-secureboot.sh",
                 args: [.port, .literal("--keys"), .literal("mainToken,backupToken"), .literal("--yes-burn")],
                 mode: .terminal,
                 terminalHint: "espefuse will ask you to type BURN to confirm the digest + enable burns."
             ),
-            ShowcaseStep(
-                id: "device.seal",
-                title: "Release seal + kill console",
-                rationale: "Seals flash encryption to Release and burns DIS_USB_SERIAL_JTAG — the last serial console. The cable can no longer read, dump, or reflash; signed+encrypted OTA is the only way in. Irreversible.",
-                script: "6-release-seal.sh",
-                args: [.port, .literal("--kill-console"), .literal("--yes-burn")],
-                mode: .terminal,
-                terminalHint: "espefuse will ask you to type BURN. Do this on a FRESH unit — once sealed, espefuse is locked out."
-            ),
+            // --- final seal (LAST: crypt-count max + disable manual encrypt + secure download) ---
             ShowcaseStep(
                 id: "device.seal.rehearse",
                 title: "Release seal — rehearse",
-                rationale: "Dry-run the seal on a virtual eFuse and read the live board's current fuse state. Nothing burned.",
+                rationale: "Dry-run the final seal on a virtual eFuse and read the live board's current fuse state. Nothing burned.",
                 script: "6-release-seal.sh",
                 args: [.port],
                 mode: .inline
             ),
             ShowcaseStep(
+                id: "device.seal",
+                title: "Release seal + kill console (LAST)",
+                rationale: "The point of no return: maxes the flash-encryption counter, disables manual encrypt, enables Secure Download Mode, and burns DIS_USB_SERIAL_JTAG — the last serial console. The cable can no longer read, dump, or reflash; signed+encrypted OTA is the only way in. Do this last, once everything above is verified.",
+                script: "6-release-seal.sh",
+                args: [.port, .literal("--kill-console"), .literal("--yes-burn")],
+                mode: .terminal,
+                terminalHint: "espefuse will ask you to type BURN. Do this on a FRESH unit — once sealed, espefuse is locked out for good."
+            ),
+        ]
+    )
+
+    // MARK: Phase 2 — Testing (read-only proofs)
+    static let testing = ShowcaseArea(
+        id: "testing",
+        title: "2 · Testing",
+        icon: "checkmark.seal",
+        blurb: "Prove the device is locked down — read-only cable checks and an over-the-network attack. Nothing is burned or changed; run these anytime after provisioning.",
+        steps: [
+            ShowcaseStep(
                 id: "device.verifyseal",
-                title: "Verify seal",
+                title: "Verify seal (cable lockout)",
                 rationale: "Proves the cable is locked out: eFuse read, flash read, and encrypt-write are all DENIED on a sealed board. Read-only and safe.",
                 script: "verify-seal.sh",
                 args: [.port],
                 mode: .inline
             ),
-        ]
-    )
-
-    // MARK: 3. Pen test
-    static let penTest = ShowcaseArea(
-        id: "pentest",
-        title: "Pen test",
-        icon: "ladybug",
-        blurb: "Attack the live device over the network and prove the cable lockout.",
-        steps: [
             ShowcaseStep(
                 id: "pentest.attack",
                 title: "OTA attack test",
@@ -286,23 +285,15 @@ public enum ShowcaseCatalog {
                 terminalHint: "Enter the token PIN once (to sign the higher-version base).",
                 verdict: ShowcaseStep.attackTestVerdict
             ),
-            ShowcaseStep(
-                id: "pentest.verifyseal",
-                title: "Cable-lockout verification",
-                rationale: "Re-runs the three cable checks (eFuse read / flash read / encrypt-write) — all must be DENIED on a sealed board.",
-                script: "verify-seal.sh",
-                args: [.port],
-                mode: .inline
-            ),
         ]
     )
 
-    // MARK: 4. Firmware updates
-    static let firmwareUpdates = ShowcaseArea(
-        id: "ota",
-        title: "Firmware updates",
+    // MARK: Phase 3 — Firmware updates (OTA)
+    static let updates = ShowcaseArea(
+        id: "updates",
+        title: "3 · Firmware updates",
         icon: "arrow.down.circle",
-        blurb: "Build, sign, and deliver a firmware update over the network.",
+        blurb: "After provisioning, the ONLY way to change firmware. Build + sign + deliver a signed, encrypted image over the network into the inactive slot, verified before activation.",
         steps: [
             ShowcaseStep(
                 id: "ota.storecreds",
